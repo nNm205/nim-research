@@ -1,12 +1,67 @@
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.models.analysis import DocumentAnalysis
+from app.models.document import Document
 from app.models.project import Project
+from app.models.report import Report
+from app.models.research import ResearchSession
 from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.utils.logger import logger
+
+
+def _annotate_counts(
+    db: Session,
+    projects: list[Project],
+) -> list[Project]:
+    """Attach scalar count attributes to each project in the list.
+
+    Counts ``_document_count`` / ``_research_session_count`` /
+    ``_analysis_count`` / ``_report_count`` are computed in one query per
+    relation (``GROUP BY project_id``) instead of pulling full child
+    rows just to call ``len()`` on them.
+
+    ``_analysis_count`` requires a join through ``Document`` because
+    DocumentAnalysis has no direct ``project_id`` column — analyses live
+    one level removed, attached to a document.
+    """
+    if not projects:
+        return projects
+
+    project_ids = [p.id for p in projects]
+
+    def _count(model, fk):
+        rows = db.execute(
+            select(fk, func.count(model.id))
+            .where(fk.in_(project_ids))
+            .group_by(fk)
+        ).all()
+        return {pid: cnt for pid, cnt in rows}
+
+    doc_counts = _count(Document, Document.project_id)
+    rs_counts = _count(ResearchSession, ResearchSession.project_id)
+    rep_counts = _count(Report, Report.project_id)
+
+    # Analyses: join through Document. We GROUP BY ``Document.project_id``
+    # so the result is keyed by project.
+    analysis_rows = db.execute(
+        select(Document.project_id, func.count(DocumentAnalysis.id))
+        .join(Document, Document.id == DocumentAnalysis.document_id)
+        .where(Document.project_id.in_(project_ids))
+        .group_by(Document.project_id)
+    ).all()
+    analysis_counts = {pid: cnt for pid, cnt in analysis_rows}
+
+    for p in projects:
+        p._document_count = doc_counts.get(p.id, 0)
+        p._research_session_count = rs_counts.get(p.id, 0)
+        p._analysis_count = analysis_counts.get(p.id, 0)
+        p._report_count = rep_counts.get(p.id, 0)
+
+    return projects
 
 
 def create_project(
@@ -51,6 +106,12 @@ def create_project(
         db.commit()
         db.refresh(new_project)
 
+        # Newly-created project has zero of every related collection.
+        new_project._document_count = 0
+        new_project._research_session_count = 0
+        new_project._analysis_count = 0
+        new_project._report_count = 0
+
         logger.success(
             f"Project created successfully: "
             f"{new_project.id}"
@@ -87,7 +148,8 @@ def get_user_projects(
             .order_by(Project.created_at.desc())
         )
 
-        projects = result.scalars().all()
+        projects = list(result.scalars().all())
+        _annotate_counts(db, projects)
 
         logger.info(
             f"Retrieved {len(projects)} projects "
@@ -140,6 +202,7 @@ def get_project_by_id(
             detail="Project not found"
         )
 
+    _annotate_counts(db, [project])
     return project
 
 
@@ -223,6 +286,9 @@ def update_project(
 
         db.commit()
         db.refresh(project)
+
+        # Re-annotate counts so the response stays consistent.
+        _annotate_counts(db, [project])
 
         logger.success(
             f"Project updated successfully: "

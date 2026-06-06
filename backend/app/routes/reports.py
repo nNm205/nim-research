@@ -52,6 +52,8 @@ def create_new_report(
 )
 def list_project_reports(
     project_id: UUID,
+    skip: int = 0,
+    limit: int = 50,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -63,11 +65,13 @@ def list_project_reports(
 
     reports = get_project_reports(
         db=db,
-        project_id=project_id
+        project_id=project_id,
+        skip=skip,
+        limit=limit,
     )
 
     return {
-        "reports": reports 
+        "reports": reports
     }
 
 @router.get(

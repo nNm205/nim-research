@@ -78,5 +78,4 @@ class Report(Base):
     project = relationship(
         "Project",
         back_populates="reports",
-        lazy="selectin"
     )

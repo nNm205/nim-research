@@ -1,7 +1,7 @@
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from app.models.project import Project
 from app.models.report import Report
 from app.schemas.report import ReportCreate, ReportUpdate
@@ -84,17 +84,33 @@ def get_report_by_id(
 
 def get_project_reports(
     db: Session,
-    project_id: UUID
+    project_id: UUID,
+    *,
+    limit: int = 50,
+    skip: int = 0,
 ) -> list[Report]:
+    """List reports for a project — list-view columns only.
+
+    ``content`` and ``html_content`` (TEXT, often hundreds of KB) are
+    deferred so the list payload stays metadata-only. The detail endpoint
+    fetches the full report on demand.
+    """
     logger.info(f"Fetching reports for project: {project_id}")
 
     try:
         result = db.execute(
             select(Report)
+            .options(
+                defer(Report.content),
+                defer(Report.html_content),
+                defer(Report.included_documents),
+            )
             .where(Report.project_id == project_id)
             .order_by(Report.created_at.desc())
+            .offset(skip)
+            .limit(limit)
         )
-        reports = result.scalars().all()
+        reports = list(result.scalars().all())
 
         logger.info(f"Retrieved {len(reports)} reports for project: {project_id}")
 

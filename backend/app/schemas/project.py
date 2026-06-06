@@ -33,6 +33,7 @@ class ProjectResponse(BaseModel):
     updated_at: datetime
     document_count: int = 0
     research_session_count: int = 0
+    analysis_count: int = 0
     report_count: int = 0
 
     model_config = {"from_attributes": True}
@@ -52,20 +53,16 @@ class ProjectResponse(BaseModel):
                       "created_at", "updated_at"]:
             result[field] = getattr(data, field, None)
 
-        # Count related collections loaded by selectin
-        try:
-            result["document_count"] = len(data.documents) if data.documents is not None else 0
-        except Exception:
-            result["document_count"] = 0
-
-        try:
-            result["research_session_count"] = len(data.research_sessions) if data.research_sessions is not None else 0
-        except Exception:
-            result["research_session_count"] = 0
-
-        try:
-            result["report_count"] = len(data.reports) if data.reports is not None else 0
-        except Exception:
-            result["report_count"] = 0
+        # Counts. Prefer scalar attributes the service may have attached
+        # (``_document_count`` etc.) so we don't trigger a lazy-load of
+        # the full collection just to call ``len()`` on it.
+        for attr, key in [
+            ("_document_count", "document_count"),
+            ("_research_session_count", "research_session_count"),
+            ("_analysis_count", "analysis_count"),
+            ("_report_count", "report_count"),
+        ]:
+            value = getattr(data, attr, None)
+            result[key] = int(value) if value is not None else 0
 
         return result

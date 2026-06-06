@@ -88,7 +88,6 @@ class KnowledgeBaseArticle(Base):
     creator = relationship(
         "User",
         foreign_keys=[created_by],
-        lazy="selectin"
     )
 
 
@@ -178,11 +177,9 @@ class KnowledgeBaseSubmission(Base):
     creator = relationship(
         "User",
         foreign_keys=[created_by],
-        lazy="selectin"
     )
 
     reviewer = relationship(
         "User",
         foreign_keys=[reviewed_by],
-        lazy="selectin"
     )

@@ -15,6 +15,22 @@ class ReportUpdate(BaseModel):
     status: ReportStatus | None = None 
     included_documents: list[UUID] | None = None 
 
+class ReportSummary(BaseModel):
+    """Compact report row for list endpoints — no ``content`` / ``html_content``.
+
+    Reports often have hundreds of KB of HTML/markdown; the project reports
+    list view only needs metadata (title, type, status, dates).
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    project_id: UUID
+    title: str
+    report_type: ReportType
+    status: ReportStatus
+    created_at: datetime
+    updated_at: datetime
+
+
 class ReportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID 
@@ -28,4 +44,4 @@ class ReportResponse(BaseModel):
     created_at: datetime 
     updated_at: datetime
 class ReportListResponse(BaseModel):
-    reports: list[ReportResponse]
+    reports: list[ReportSummary]

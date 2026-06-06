@@ -1,12 +1,18 @@
 from uuid import UUID
 from fastapi import HTTPException, status
-from sqlalchemy import select, func
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func, update as sql_update
+from sqlalchemy.orm import Session, defer, selectinload, load_only
 from app.models.knowledge_base import KnowledgeBaseArticle, KnowledgeBaseSubmission
+from app.models.user import User
 from app.schemas.knowledge_base import KnowledgeBaseArticleCreate, KnowledgeBaseArticleUpdate, KnowledgeBaseSubmissionCreate, KnowledgeBaseSubmissionReject
 from app.utils.logger import logger
 from app.utils.constants import KnowledgeBaseArticleStatus, KnowledgeBaseSubmissionStatus
 from datetime import datetime, timezone
+
+
+# Loader option used by every list-view query so the FE only receives the
+# minimal User columns needed for ``UserInfo``.
+_USER_INFO_COLUMNS = (User.id, User.full_name, User.email)
 
 def create_article(
     db: Session,
@@ -46,23 +52,28 @@ def create_article(
 
 def get_article_by_id(
     db: Session,
-    article_id: UUID
+    article_id: UUID,
 ) -> KnowledgeBaseArticle:
+    """Detail fetch: includes full ``content`` + creator info via explicit
+    selectinload (only the User columns we actually surface).
+    """
     logger.info(f"Fetching article: {article_id}")
 
-    result = db.execute(
-        select(KnowledgeBaseArticle).where(
-            KnowledgeBaseArticle.id == article_id
+    article = db.scalar(
+        select(KnowledgeBaseArticle)
+        .options(
+            selectinload(KnowledgeBaseArticle.creator).load_only(
+                *_USER_INFO_COLUMNS
+            ),
         )
+        .where(KnowledgeBaseArticle.id == article_id)
     )
-    article = result.scalar_one_or_none()
 
     if not article:
         logger.warning(f"Article not found: {article_id}")
-
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Article not found"
+            detail="Article not found",
         )
 
     return article
@@ -72,12 +83,19 @@ def get_all_articles(
     category: str | None = None,
     search: str | None = None,
     skip: int = 0,
-    limit: int = 50
+    limit: int = 50,
 ) -> tuple[list[KnowledgeBaseArticle], int]:
+    """Paginated published-articles list — list-view columns only.
+
+    - ``content`` is deferred (TEXT toàn văn không cần ở list).
+    - ``creator`` được kèm qua explicit ``selectinload(...).load_only`` để
+      chỉ lấy 3 cột User cần cho ``UserInfo``, không kéo cả password_hash.
+    - Tổng số được tính bằng window function ``count(*) OVER ()`` trong
+      cùng 1 query thay vì 2 round trip.
+    """
     logger.info(f"Fetching articles - category: {category}, search: {search}")
 
     try:
-        # Build conditions list to reuse for both count and data queries
         base_conditions = [
             KnowledgeBaseArticle.status == KnowledgeBaseArticleStatus.PUBLISHED.value
         ]
@@ -86,39 +104,44 @@ def get_all_articles(
             base_conditions.append(KnowledgeBaseArticle.category == category)
 
         if search:
+            # pg_trgm GIN index (added in add_kb_search_001) makes ``ilike``
+            # on these columns an index scan instead of seq scan.
             search_term = f"%{search}%"
             base_conditions.append(
-                (KnowledgeBaseArticle.title.ilike(search_term)) |
-                (KnowledgeBaseArticle.excerpt.ilike(search_term)) |
-                (KnowledgeBaseArticle.content.ilike(search_term))
+                (KnowledgeBaseArticle.title.ilike(search_term))
+                | (KnowledgeBaseArticle.excerpt.ilike(search_term))
+                | (KnowledgeBaseArticle.content.ilike(search_term))
             )
 
-        # Get total count using the same conditions
-        count_query = select(func.count()).select_from(KnowledgeBaseArticle)
-        for condition in base_conditions:
-            count_query = count_query.where(condition)
-        total = db.execute(count_query).scalar() or 0
+        total_col = func.count().over().label("total_count")
 
-        # Get paginated results
-        query = select(KnowledgeBaseArticle)
+        query = (
+            select(KnowledgeBaseArticle, total_col)
+            .options(
+                defer(KnowledgeBaseArticle.content),
+                selectinload(KnowledgeBaseArticle.creator).load_only(
+                    *_USER_INFO_COLUMNS
+                ),
+            )
+            .order_by(KnowledgeBaseArticle.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
         for condition in base_conditions:
             query = query.where(condition)
-        query = query.order_by(KnowledgeBaseArticle.created_at.desc())
-        query = query.offset(skip).limit(limit)
 
-        result = db.execute(query)
-        articles = result.scalars().all()
+        rows = db.execute(query).all()
+        articles = [row[0] for row in rows]
+        total = int(rows[0][1]) if rows else 0
 
-        logger.success(f"Retrieved {len(articles)} articles")
-
+        logger.success(f"Retrieved {len(articles)} articles (total={total})")
         return articles, total
 
     except Exception as e:
         logger.error(f"Failed to fetch articles: {str(e)}")
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+            detail="Internal server error",
         )
 
 def get_categories_with_counts(
@@ -165,7 +188,8 @@ def update_article(
             setattr(article, key, value)
 
         db.commit()
-        db.refresh(article)
+        # No db.refresh: expire_on_commit=False keeps the in-memory ORM
+        # values fresh, and update_dict already reflects the new values.
 
         logger.success(f"Article updated: {article.id}")
 
@@ -205,25 +229,34 @@ def delete_article(
 
 def increment_article_views(
     db: Session,
-    article: KnowledgeBaseArticle
+    article: KnowledgeBaseArticle,
 ) -> KnowledgeBaseArticle:
-    logger.info(f"Incrementing views for article: {article.id}")
+    """Atomically bump ``views`` via a single UPDATE.
 
+    The previous version did ``article.views += 1; commit; refresh()`` which
+    is non-atomic (lost updates under concurrent reads), and adds 2 extra
+    round trips per detail page hit. The atomic UPDATE runs as one
+    statement and we mirror the new count on the in-memory ORM object so
+    the response reflects it without re-fetching.
+    """
     try:
-        article.views += 1
+        db.execute(
+            sql_update(KnowledgeBaseArticle)
+            .where(KnowledgeBaseArticle.id == article.id)
+            .values(views=KnowledgeBaseArticle.views + 1)
+        )
         db.commit()
-        db.refresh(article)
-
+        # Mirror the increment locally so the response model serialises the
+        # new count without round-tripping for a refresh.
+        article.views = (article.views or 0) + 1
         return article
 
     except Exception as e:
         db.rollback()
-
-        logger.error(f"Failed to increment views for {article.id}: {str(e)}")
-
+        logger.error(f"Failed to increment views for {article.id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+            detail="Internal server error",
         )
 
 # Submission functions
@@ -265,23 +298,28 @@ def create_submission(
 
 def get_submission_by_id(
     db: Session,
-    submission_id: UUID
+    submission_id: UUID,
 ) -> KnowledgeBaseSubmission:
     logger.info(f"Fetching submission: {submission_id}")
 
-    result = db.execute(
-        select(KnowledgeBaseSubmission).where(
-            KnowledgeBaseSubmission.id == submission_id
+    submission = db.scalar(
+        select(KnowledgeBaseSubmission)
+        .options(
+            selectinload(KnowledgeBaseSubmission.creator).load_only(
+                *_USER_INFO_COLUMNS
+            ),
+            selectinload(KnowledgeBaseSubmission.reviewer).load_only(
+                *_USER_INFO_COLUMNS
+            ),
         )
+        .where(KnowledgeBaseSubmission.id == submission_id)
     )
-    submission = result.scalar_one_or_none()
 
     if not submission:
         logger.warning(f"Submission not found: {submission_id}")
-
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Submission not found"
+            detail="Submission not found",
         )
 
     return submission
@@ -289,80 +327,94 @@ def get_submission_by_id(
 def get_pending_submissions(
     db: Session,
     skip: int = 0,
-    limit: int = 50
+    limit: int = 50,
 ) -> tuple[list[KnowledgeBaseSubmission], int]:
+    """Pending submissions list — defers ``content``, single window-count query.
+
+    Loads ``creator`` and ``reviewer`` via explicit selectinload with the
+    minimal User columns we surface in ``UserInfo``. Avoids the previous
+    cascade that pulled full User rows (incl. password_hash) per submission.
+    """
     logger.info("Fetching pending submissions")
 
     try:
-        query = select(KnowledgeBaseSubmission).where(
-            KnowledgeBaseSubmission.status == KnowledgeBaseSubmissionStatus.PENDING.value
-        )
-
-        # Get total count
-        count_result = db.execute(
-            select(func.count()).select_from(KnowledgeBaseSubmission).where(
-                KnowledgeBaseSubmission.status == KnowledgeBaseSubmissionStatus.PENDING.value
+        total_col = func.count().over().label("total_count")
+        query = (
+            select(KnowledgeBaseSubmission, total_col)
+            .options(
+                defer(KnowledgeBaseSubmission.content),
+                selectinload(KnowledgeBaseSubmission.creator).load_only(
+                    *_USER_INFO_COLUMNS
+                ),
+                selectinload(KnowledgeBaseSubmission.reviewer).load_only(
+                    *_USER_INFO_COLUMNS
+                ),
             )
+            .where(
+                KnowledgeBaseSubmission.status
+                == KnowledgeBaseSubmissionStatus.PENDING.value
+            )
+            .order_by(KnowledgeBaseSubmission.created_at.desc())
+            .offset(skip)
+            .limit(limit)
         )
-        total = count_result.scalar() or 0
+        rows = db.execute(query).all()
+        submissions = [row[0] for row in rows]
+        total = int(rows[0][1]) if rows else 0
 
-        # Get paginated results
-        query = query.order_by(KnowledgeBaseSubmission.created_at.desc())
-        query = query.offset(skip).limit(limit)
-
-        result = db.execute(query)
-        submissions = result.scalars().all()
-
-        logger.success(f"Retrieved {len(submissions)} pending submissions")
-
+        logger.success(
+            f"Retrieved {len(submissions)} pending submissions (total={total})"
+        )
         return submissions, total
 
     except Exception as e:
         logger.error(f"Failed to fetch submissions: {str(e)}")
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+            detail="Internal server error",
         )
 
 def get_user_submissions(
     db: Session,
     user_id: UUID,
     skip: int = 0,
-    limit: int = 50
+    limit: int = 50,
 ) -> tuple[list[KnowledgeBaseSubmission], int]:
+    """My-submissions list — same loading strategy as ``get_pending_submissions``."""
     logger.info(f"Fetching submissions for user: {user_id}")
 
     try:
-        query = select(KnowledgeBaseSubmission).where(
-            KnowledgeBaseSubmission.created_by == user_id
-        )
-
-        # Get total count
-        count_result = db.execute(
-            select(func.count()).select_from(KnowledgeBaseSubmission).where(
-                KnowledgeBaseSubmission.created_by == user_id
+        total_col = func.count().over().label("total_count")
+        query = (
+            select(KnowledgeBaseSubmission, total_col)
+            .options(
+                defer(KnowledgeBaseSubmission.content),
+                selectinload(KnowledgeBaseSubmission.creator).load_only(
+                    *_USER_INFO_COLUMNS
+                ),
+                selectinload(KnowledgeBaseSubmission.reviewer).load_only(
+                    *_USER_INFO_COLUMNS
+                ),
             )
+            .where(KnowledgeBaseSubmission.created_by == user_id)
+            .order_by(KnowledgeBaseSubmission.created_at.desc())
+            .offset(skip)
+            .limit(limit)
         )
-        total = count_result.scalar() or 0
+        rows = db.execute(query).all()
+        submissions = [row[0] for row in rows]
+        total = int(rows[0][1]) if rows else 0
 
-        # Get paginated results
-        query = query.order_by(KnowledgeBaseSubmission.created_at.desc())
-        query = query.offset(skip).limit(limit)
-
-        result = db.execute(query)
-        submissions = result.scalars().all()
-
-        logger.success(f"Retrieved {len(submissions)} submissions for user")
-
+        logger.success(
+            f"Retrieved {len(submissions)} submissions for user (total={total})"
+        )
         return submissions, total
 
     except Exception as e:
         logger.error(f"Failed to fetch user submissions: {str(e)}")
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+            detail="Internal server error",
         )
 
 def approve_submission(
@@ -392,8 +444,11 @@ def approve_submission(
         submission.reviewed_at = datetime.now(timezone.utc)
 
         db.commit()
+        # We still need ``article.id`` (server-side default UUID isn't used —
+        # SQLAlchemy generated it client-side via ``default=uuid.uuid4``) so
+        # one refresh on the new article is enough; the submission already
+        # had its values set in-memory.
         db.refresh(article)
-        db.refresh(submission)
 
         logger.success(f"Submission approved: {submission.id}")
 
@@ -424,7 +479,7 @@ def reject_submission(
         submission.reviewed_at = datetime.now(timezone.utc)
 
         db.commit()
-        db.refresh(submission)
+        # No db.refresh: in-memory submission already has the new fields.
 
         logger.success(f"Submission rejected: {submission.id}")
 
