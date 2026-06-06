@@ -2,294 +2,286 @@
 
 # NIM Research
 
-### AI-powered Research Assistant with Multi-Agent LLMs and RAG
+### AI-powered research assistant for academic document analysis
 
-NIM Research is a full-stack AI document intelligence platform that helps users upload, analyze, search, and generate structured reports from research documents.
-The system combines **FastAPI**, **React**, **PostgreSQL**, **Pinecone**, **LLM providers**, and a **multi-agent architecture** to transform unstructured documents into actionable insights.
+A full-stack platform that ingests research papers, extracts structured insights section-by-section, runs cross-source literature search, and chains everything into a single one-click pipeline — so you can go from "what's known about X?" to a fully analysed corpus in minutes.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776ab?style=flat-square\&logo=python\&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.135+-009688?style=flat-square\&logo=fastapi\&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-19+-61DAFB?style=flat-square\&logo=react\&logoColor=black)](https://react.dev/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-336791?style=flat-square\&logo=postgresql\&logoColor=white)](https://www.postgresql.org/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square\&logo=docker\&logoColor=white)](https://www.docker.com/)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.135+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![pgvector](https://img.shields.io/badge/pgvector-enabled-336791?style=flat-square)](https://github.com/pgvector/pgvector)
+[![LangGraph](https://img.shields.io/badge/LangGraph-pipeline-1c3d5a?style=flat-square)](https://langchain-ai.github.io/langgraph/)
+[![Tailwind](https://img.shields.io/badge/Tailwind-4-38B2AC?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 
 </div>
 
 ---
 
-## 📖 Overview
+## What it does
 
-**NIM Research** is designed for researchers, analysts, and knowledge workers who need to extract insights from large collections of documents.
-Users can create projects, upload documents, run AI-powered analysis, ask questions over their knowledge base, and generate structured reports with source-grounded answers.
+Researchers spend hours on the boring parts of literature work — searching across databases, downloading PDFs, scrolling through them, taking notes section by section, then connecting the dots. NIM Research automates each of those steps and puts them on one pipeline.
 
-The project demonstrates practical experience in:
+**Three core workflows**:
 
-* Building full-stack web applications with **FastAPI** and **React**
-* Designing **RAG pipelines** for document search and question answering
-* Orchestrating multiple LLM-powered agents for complex workflows
-* Managing authentication, projects, documents, reports, and real-time updates
-* Integrating vector databases, relational databases, and external AI providers
+- **Upload & analyse** — drop a PDF or paste an arXiv URL. The platform parses it (handling 2-column layouts, math symbols, tables), chunks it section-aware, embeds each chunk, then runs a section-by-section LLM analysis that extracts claims, methods, data, tables, formulas, critique, and quotes. Results render as scannable cards with KaTeX math, sortable tables, and an executive summary.
+- **Multi-source search** — query arXiv, Google Scholar, and Semantic Scholar in parallel; results are deduplicated and re-ranked by semantic relevance. Click "Add to project" on any result and the system auto-locates a downloadable PDF (Unpaywall via DOI, arXiv-derived, or scraped from the landing page) and runs the full ingest pipeline.
+- **Auto-research** — type a topic, pick how many papers to ingest and which LLM to use, walk away. The orchestrator chains *search → ingest top-N → analyse each → report* into a single background task with a live progress panel showing every stage.
 
 ---
 
-## Key Features
+## Screenshots
 
-| Feature                            | Description                                                                               |
-| ---------------------------------- | ----------------------------------------------------------------------------------------- |
-| **Document Analysis**              | Upload PDF, DOCX, and TXT files, then parse, chunk, embed, and analyze their content.     |
-| **Retrieval-Augmented Generation** | Uses vector search to retrieve relevant document context before generating answers.       |
-| **Multi-Agent Workflow**           | Specialized agents handle analysis, research, QA, synthesis, and workflow coordination.   |
-| **AI Report Generation**           | Generates structured research summaries, executive summaries, and document-based reports. |
-| **Knowledge Base Search**          | Enables semantic search and question answering across uploaded documents.                 |
-| **Real-Time Progress Updates**     | Uses WebSocket communication to show live analysis and agent workflow status.             |
-| **Authentication & Authorization** | Supports JWT authentication, password hashing, and role-based access control.             |
-| **Project-Based Organization**     | Users can organize documents, analyses, and reports into separate projects.               |
-| **Provider Flexibility**           | Supports multiple LLM and embedding providers through a pluggable provider design.        |
-
----
-
-## 🖼️ Screenshots
-
-### Authentication
-
-<img src="./docs/images/nim_research_login.png" alt="Login Page" width="100%" />
-<br />
-<img src="./docs/images/nim_research_register.png" alt="Register Page" width="100%" />
-
-### Dashboard
-
-<img src="docs/images/nim_research_dashboard.png" alt="Dashboard" width="100%" />
-
-### Projects
-
-<img src="docs/images/nim_research_projects.png" alt="Projects Page" width="100%" />
-<br />
-<img src="docs/images/nim_research_project-detail.png" alt="Project Detail Page" width="100%" />
-
-### Documents
-
-<img src="docs/images/nim_research_documents.png" alt="Documents Page" width="100%" />
-
-### Analysis
-
-<img src="docs/images/nim_research_analysis.png" alt="Analysis In Progress" width="100%" />
-<br />
-<img src="docs/images/nim_research_analysis-result.png" alt="Analysis Result" width="100%" />
-
-### Reports
-
-<img src="docs/images/nim_research_reports.png" alt="Reports Page" width="100%" />
-
-### Knowledge Base
-
-<img src="docs/images/nim_research_knowledge-base.png" alt="Knowledge Base Page" width="100%" />
-
-### Chat with Agents
-
-<img src="docs/images/nim_research_chat.png" alt="Chat with Agents" width="100%" />
-
-### Admin Panel
-
-<img src="docs/images/nim_research_admin.png" alt="Admin Panel" width="100%" />
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/nim_research_dashboard.png" alt="Dashboard" /></td>
+    <td width="50%"><img src="docs/images/nim_research_projects.png" alt="Projects" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Dashboard overview</sub></td>
+    <td align="center"><sub>Projects list with topic chips and stats</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/nim_research_project-detail.png" alt="Project detail" /></td>
+    <td><img src="docs/images/nim_research_documents.png" alt="Documents" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Project workspace with auto-research and live progress</sub></td>
+    <td align="center"><sub>Cross-project documents aggregator</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/nim_research_analysis.png" alt="Analysis results" /></td>
+    <td><img src="docs/images/nim_research_reports.png" alt="Reports" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Section-by-section analysis with KaTeX, tables, and tabs</sub></td>
+    <td align="center"><sub>Generated reports</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/nim_research_knowledge-base.png" alt="Knowledge Base" /></td>
+    <td><img src="docs/images/nim_research_login.png" alt="Login" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Knowledge base with trigram search</sub></td>
+    <td align="center"><sub>Authentication</sub></td>
+  </tr>
+</table>
 
 ---
 
-## ⚙️ Tech Stack
+## Features
+
+### Document ingestion
+
+- Upload PDF or HTML (drag-drop, 50 MB cap) **or** paste a URL — system fetches and parses it
+- 2-column-aware PDF extraction (PyMuPDF block mode + reading-order column clustering)
+- Heading detection by font size + numbered/named regex with sequence validation, so list items like "1. First metric" inside subsection 6.1 are not misinterpreted as new sections
+- Tables extracted with pdfplumber and embedded as markdown blocks
+- Equations detected by math-symbol density + LaTeX cues, rendered with KaTeX in the UI
+- Section-aware chunker tags every chunk with `section_title`, `section_number`, `subsections` so downstream agents can map chunks to sections deterministically
+
+### Section-grounded analysis
+
+- LangGraph pipeline: `load_chunks → map_sections → build_outline → analyse_sections → synthesize → persist`
+- One LLM call per section produces a structured insight object: summary, purpose, key points, claims (with evidence type + confidence), methods, data/experiments, tables, formulas, notable terms, critique, open questions, quotes
+- One final synthesis call produces narrative + executive summary in a single round-trip
+- Smart truncation (head + tail) for long sections instead of map-reduce — saves LLM quota
+- Heuristic fallback when LLM fails so a card never renders empty
+- Total: **~N+1 LLM calls** for an N-section paper
+
+### Multi-source search + auto-pipeline
+
+- Parallel search across **arXiv**, **Google Scholar**, **Semantic Scholar** (1 RPS rate-limited with API key)
+- Re-ranked by semantic relevance to query
+- **PDF finder service**: Unpaywall (via DOI) → arXiv-derived → page scrape (citation_pdf_url meta + fallback `<a href>`)
+- **Auto-research**: search → ingest top-N → analyse each → report, all in one background task with a live 4-stage progress panel
+- Standalone analyses also get a live progress panel
+
+### LLM + embedding flexibility
+
+- 5 LLM providers: **Gemini**, **Groq**, **OpenAI**, **Claude**, **OpenRouter** — pick one per analysis
+- 3 embedding providers: **HuggingFace**, **Jina**, **Google AI**
+- Free-tier-aware retry: parses `retryDelay` from Gemini 429 responses, exponential backoff for others, sequential analyses inside the auto-research orchestrator
+
+### UX
+
+- Tag-chip topic editor with keyboard shortcuts (Enter / comma / Backspace)
+- Cross-project documents and analyses pages with project + status filter chips
+- Live progress panels with per-stage steppers, per-item counters, embedded sub-progress
+- Tables auto-detect numeric columns and right-align with tabular numbers
+- KaTeX-rendered math with error boundary fallback to raw LaTeX
+
+### Performance
+
+- Async DB session compatible with **Supabase Supavisor pooler** (per-call UUID-named prepared statements, statement cache disabled)
+- pgvector for semantic chunk search
+- pg_trgm GIN indexes for fast title/content fuzzy search in the knowledge base
+- List endpoints defer heavy `content` / JSONB columns; counts via `GROUP BY` instead of `len(selectin)`
+- Window function `count(*) OVER ()` instead of separate count + fetch queries
+
+---
+
+## Tech stack
 
 ### Backend
-
-* **FastAPI** — asynchronous Python web framework
-* **SQLAlchemy 2.0** — ORM and database models
-* **PostgreSQL** — relational database
-* **Alembic** — database migrations
-* **Pydantic v2** — request and response validation
-* **JWT + bcrypt** — authentication and password security
-* **Pytest** — backend testing
-
-### AI / Machine Learning
-
-* **LangChain / LangGraph** — LLM workflow and agent orchestration
-* **OpenAI, Groq, Anthropic, OpenRouter** — supported LLM providers
-* **Google AI, HuggingFace, Jina** — embedding providers
-* **Pinecone** — vector database
-* **RAG** — retrieval-augmented generation for grounded answers
+- **FastAPI** with async/await throughout
+- **SQLAlchemy 2.0** + **asyncpg** for the async path, **psycopg2** for sync admin paths
+- **PostgreSQL 15** with **pgvector** and **pg_trgm** extensions
+- **Alembic** migrations
+- **LangChain** + **LangGraph** for agent orchestration
+- **PyMuPDF** + **pdfplumber** for PDF parsing
+- **httpx** for outbound HTTP (Unpaywall, S2 API)
 
 ### Frontend
+- **React 19** + **Vite** + **Tailwind 4**
+- **React Router v7**
+- **react-katex** for math rendering
+- **Lucide** icons
+- Polling-based progress updates (3s interval while a session is active)
 
-* **React 19 + Vite** — frontend application
-* **Tailwind CSS 4** — styling
-* **React Router v7** — routing
-* **Axios** — API communication
-* **Native WebSocket** — real-time updates
-* **Lucide React** — icon system
+### LLM / Embedding providers (pluggable)
+- LLM: Google Gemini, Groq, OpenAI, Anthropic Claude, OpenRouter
+- Embedding: HuggingFace Inference, Jina AI, Google AI
+- Vector store: **pgvector** (built into PostgreSQL — no separate service needed)
 
 ### Infrastructure
-
-* **Docker & Docker Compose** — containerized development
-* **Environment-based configuration**
-* **Modular backend service architecture**
+- Docker Compose for local development
+- Environment-based configuration via `.env`
 
 ---
 
-## System Architecture
+## Architecture
 
-<p align="center">
-  <img src="docs/images/architecture.png" alt="System Architecture" width="90%" />
-</p>
-
-```text
-Frontend: React + Vite
-    |
-    | HTTP / WebSocket
-    v
-Backend: FastAPI
-    |
-    |-- Auth / Projects / Documents / Analysis / Reports / Admin APIs
-    |
-    |-- Multi-Agent System
-    |     |-- Orchestrator Agent
-    |     |-- Analysis Agent
-    |     |-- Research Agent
-    |     |-- QA Agent
-    |     |-- Synthesis Agent
-    |
-    |-- Services Layer
-          |-- Document Service
-          |-- Analysis Service
-          |-- Report Service
-          |-- Knowledge Base Service
-
-Data Layer:
-    |-- PostgreSQL for relational data
-    |-- Pinecone for vector search
+```
+┌────────────────┐                                ┌────────────────┐
+│  React + Vite  │   HTTP + 3s polling for live   │    FastAPI     │
+│  + Tailwind    │ ◄──────────────────────────────►   (async)      │
+└────────────────┘                                └───────┬────────┘
+                                                          │
+                          ┌───────────────────────────────┴────────────────────────┐
+                          │                                                        │
+                          ▼                                                        ▼
+        ┌──────────────────────────────────┐                     ┌────────────────────────────┐
+        │         AnalysisAgent            │                     │      AutoResearchService   │
+        │      (LangGraph pipeline)        │                     │       (orchestrator)       │
+        │                                  │                     │                            │
+        │  load_chunks → map_sections      │                     │  search → ingest top-N     │
+        │   → build_outline → analyse      │                     │   → analyse each → done    │
+        │   → synthesize → persist         │                     │                            │
+        └────────────┬─────────────────────┘                     └─────────────┬──────────────┘
+                     │                                                         │
+                     │ uses                                              uses  │
+                     ▼                                                         ▼
+        ┌──────────────────────────────────────────────────────────────────────────────┐
+        │  Service layer: documents · analyses · projects · research · KB · reports   │
+        └────────────────────────────────────┬─────────────────────────────────────────┘
+                                             │
+                  ┌──────────────────────────┴──────────────────────────┐
+                  ▼                                                     ▼
+   ┌─────────────────────────────┐                   ┌──────────────────────────────────┐
+   │  PostgreSQL + pgvector      │                   │  External APIs                   │
+   │                             │                   │  · arXiv · Google Scholar (SerpAPI)│
+   │  · projects · documents     │                   │  · Semantic Scholar · Unpaywall  │
+   │  · document_chunks (vector) │                   │  · LLM providers · Embedding     │
+   │  · analyses · reports · kb  │                   │    providers                     │
+   └─────────────────────────────┘                   └──────────────────────────────────┘
 ```
 
 ---
 
-## Multi-Agent System
-
-NIM Research uses a multi-agent architecture to divide complex document intelligence tasks into specialized responsibilities.
-
-| Agent                  | Responsibility                                                              |
-| ---------------------- | --------------------------------------------------------------------------- |
-| **Orchestrator Agent** | Coordinates the workflow, routes tasks, and manages agent execution.        |
-| **Analysis Agent**     | Extracts key information, entities, patterns, and summaries from documents. |
-| **Research Agent**     | Retrieves relevant context from the knowledge base and supporting sources.  |
-| **QA Agent**           | Answers user questions using retrieved document context.                    |
-| **Synthesis Agent**    | Combines analysis outputs into structured reports and summaries.            |
-
----
-
-## Core Workflow
-
-```text
-1. User creates a project
-2. User uploads documents
-3. Backend parses and chunks document content
-4. Embeddings are generated and stored in Pinecone
-5. User runs analysis or asks a question
-6. Relevant chunks are retrieved through semantic search
-7. Agents process the context and generate results
-8. Results are saved and displayed in the dashboard
-```
-
----
-
-## ▶️ Getting Started
+## Quick start
 
 ### Prerequisites
 
-Make sure the following tools are installed:
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL 15 with `pgvector` and `pg_trgm` extensions enabled (or use [Supabase](https://supabase.com/) which has both pre-installed)
+- A free Gemini, Groq, or OpenAI API key (Gemini's free tier is enough to try the platform)
 
-* Python 3.11+
-* Node.js 18+
-* PostgreSQL 14+
-* Docker & Docker Compose
-
----
-
-### Option 1: Run with Docker
-
-```bash
-git clone https://github.com/nNm205/nim-research.git
-cd nim-research/backend
-docker-compose up -d
-``` 
-
----
-
-### Option 2: Run Locally
-
-#### Backend
+### Backend
 
 ```bash
 cd backend
 
 python -m venv venv
-
 # Windows
 venv\Scripts\activate
-
 # macOS / Linux
 # source venv/bin/activate
 
 pip install -r requirements.txt
-copy .env.example .env
 
+# Configure
+copy .env.example .env       # Windows
+# cp .env.example .env       # macOS / Linux
+# then edit .env (see "Environment" below)
+
+# Migrate
 alembic upgrade head
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Run
+uvicorn app.main:app --reload --port 8000
 ```
 
-Backend API:
+API at `http://localhost:8000`. Swagger UI at `http://localhost:8000/docs`.
 
-```text
-http://localhost:8000
-```
-
-API Documentation:
-
-```text
-http://localhost:8000/docs
-```
-
----
-
-#### Frontend
+### Frontend
 
 ```bash
 cd frontend
 npm install
-copy .env.example .env
+copy .env.example .env       # Windows
+# cp .env.example .env       # macOS / Linux
 npm run dev
 ```
 
-Frontend app:
-
-```text
-http://localhost:5173
-```
+App at `http://localhost:5173`.
 
 ---
 
-## Environment Variables
+## Environment
 
-Example backend configuration:
+Backend `.env` (only the values the platform actually reads):
 
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/nim_eng
+APP_NAME=NIM Research
+DEBUG=False
 
-GROQ_API_KEY=your_groq_api_key
-OPENAI_API_KEY=your_openai_api_key
+# Database (Supabase / local Postgres with pgvector + pg_trgm)
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
 
-PINECONE_API_KEY=your_pinecone_api_key
-PINECONE_INDEX_NAME=nim-eng-index
+# Auth
+JWT_SECRET_KEY=replace_with_a_long_random_string
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=10080
 
-SECRET_KEY=your_secret_key
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+# LLM providers — at least one required
+PROVIDER=gemini
+MODEL_NAME=gemini-2.5-flash
+GROQ_API_KEY=...
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.openai.com/v1
+CLAUDE_API_KEY=...
+CLAUDE_BASE_URL=https://api.anthropic.com/v1
+OPENROUTER_API_KEY=...
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
+# Embedding providers — at least one required
+EMBEDDING_PROVIDER=huggingface
+EMBEDDING_MODEL=ibm-granite/granite-embedding-97m-multilingual-r2
+HUGGINGFACE_API_KEY=...
+GOOGLEAI_API_KEY=...
+JINA_API_KEY=...
+
+# Search APIs (optional but unlocks Google Scholar + web search)
+SERP_API_KEY=...
+SEMANTIC_API_KEY=...
+
+REDIS_URL=redis://localhost:6379   # placeholder; not currently used
 ```
 
-Example frontend configuration:
+Frontend `.env`:
 
 ```env
 VITE_API_URL=http://localhost:8000
@@ -297,109 +289,89 @@ VITE_API_URL=http://localhost:8000
 
 ---
 
-## API Highlights
+## API surface
 
-Interactive API documentation is available through Swagger UI after running the backend:
+Interactive docs at `http://localhost:8000/docs`. Highlights:
 
-```text
-http://localhost:8000/docs
-```
-
-Main API modules include:
-
-| Module             | Description                                                   |
-| ------------------ | ------------------------------------------------------------- |
-| **Auth**           | Register, login, refresh token, and manage authentication.    |
-| **Projects**       | Create and manage research projects.                          |
-| **Documents**      | Upload, list, retrieve, and delete documents.                 |
-| **Analysis**       | Create analysis tasks and retrieve analysis results.          |
-| **Reports**        | Generate, update, and manage AI-generated reports.            |
-| **Knowledge Base** | Perform semantic search and RAG-based question answering.     |
-| **Admin**          | Manage users, system settings, and administrative operations. |
+| Endpoint                                                       | What it does                                              |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `POST /api/v1/projects/{id}/documents/upload-file`             | Upload a PDF/HTML file directly                           |
+| `POST /api/v1/projects/{id}/documents/ingest-url`              | Ingest a public URL                                       |
+| `POST /api/v1/projects/{id}/documents/ingest-search-result`    | Ingest a research-search result (auto PDF lookup)         |
+| `POST /api/v1/projects/{id}/research`                          | Start a multi-source search session                       |
+| `POST /api/v1/projects/{id}/auto-research`                     | Search → ingest top-N → analyse, all chained              |
+| `POST /api/v1/projects/{id}/analyze`                           | Analyse a single document with chosen LLM                 |
+| `GET  /api/v1/analysis/{id}/results`                           | Full structured insight (sections, synthesis, summary)    |
+| `GET  /api/v1/llm/providers`                                   | Available LLM providers + models                          |
+| `GET  /api/v1/embeddings/providers`                            | Available embedding providers + models                    |
+| `GET  /api/v1/documents`                                       | All documents owned by the user across every project      |
+| `GET  /api/v1/analyses`                                        | All analyses owned by the user across every project       |
 
 ---
 
-## Project Structure
+## Project structure
 
-```text
+```
 nim-eng/
 ├── backend/
 │   ├── app/
-│   │   ├── agents/          # Multi-agent system
-│   │   ├── routes/          # FastAPI route handlers
-│   │   ├── services/        # Business logic layer
-│   │   ├── models/          # SQLAlchemy models and providers
-│   │   ├── schemas/         # Pydantic schemas
-│   │   ├── database/        # Database configuration
-│   │   ├── prompts/         # Agent prompt templates
-│   │   ├── utils/           # Helper utilities
-│   │   └── main.py          # Application entry point
-│   ├── alembic/             # Database migrations
-│   ├── tests/               # Backend tests
+│   │   ├── agents/
+│   │   │   ├── analysis_agent.py            # LangGraph pipeline
+│   │   │   ├── research_agent.py            # multi-source search
+│   │   │   └── tools/
+│   │   │       ├── analysis/                # 7 tools used by AnalysisAgent
+│   │   │       └── research/                # progress tracker
+│   │   ├── routes/                          # FastAPI handlers
+│   │   ├── services/
+│   │   │   ├── auto_research_service.py     # search → ingest → analyse chain
+│   │   │   ├── document_ingestion_service.py
+│   │   │   ├── pdf_finder_service.py        # Unpaywall + arXiv + scrape
+│   │   │   └── ...
+│   │   ├── models/
+│   │   │   ├── llm_providers/               # 5 LLM provider implementations
+│   │   │   ├── embedding_providers/         # 3 embedding implementations
+│   │   │   └── ...
+│   │   ├── tools/document/
+│   │   │   ├── parsers/                     # PDF + HTML
+│   │   │   ├── chunkers/                    # section-aware chunker
+│   │   │   ├── fetchers/                    # PDF + HTML fetchers
+│   │   │   └── vectorstores/                # pgvector
+│   │   ├── tools/search/                    # arxiv, scholar, semantic, web
+│   │   ├── prompts/                         # LLM prompt templates
+│   │   ├── schemas/                         # Pydantic validation
+│   │   ├── database/                        # async + sync sessions
+│   │   └── main.py
+│   ├── alembic/versions/                    # 9 migrations
+│   ├── scripts/                             # one-off maintenance scripts
 │   └── requirements.txt
-│
 ├── frontend/
-│   ├── src/
-│   │   ├── pages/           # Page-level views
-│   │   ├── components/      # Reusable UI components
-│   │   ├── contexts/        # React contexts
-│   │   ├── services/        # API clients
-│   │   └── App.jsx
-│   ├── package.json
-│   └── vite.config.js
-│
-├── docs/
-│   └── images/              # README screenshots and diagrams
-└── .kiro/                   # Development specifications
+│   └── src/
+│       ├── pages/                           # AnalysisResults, ProjectDetail, …
+│       ├── components/
+│       │   ├── analysis/                    # SectionInsightCard, progress panels
+│       │   ├── projects/                    # AutoResearchModal, TopicChipInput
+│       │   ├── research/                    # IngestSearchResultModal, progress
+│       │   └── documents/                   # CreateDocumentModal (URL + upload)
+│       ├── services/                        # API clients
+│       └── hooks/                           # useAnalysisPolling
+└── docs/images/                             # screenshots
 ```
 
 ---
 
-## Testing
+## Roadmap
 
-### Backend
-
-```bash
-cd backend
-pytest
-pytest --cov=app
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm run test
-```
+- [ ] PDF citation highlighting on analysis results
+- [ ] Background job queue (Celery/RQ) instead of in-process `asyncio.create_task`
+- [ ] Evaluation harness for analysis quality across paper genres
+- [ ] Export reports as Word / LaTeX with citation formatting
+- [ ] Multi-tenant team workspaces with role-based access
+- [ ] Cloud deployment templates (Vercel + Render / Fly.io)
 
 ---
 
-## Future Improvements
+## Author
 
-Planned improvements include:
+**Nguyễn Nhật Minh** — [@nNm205](https://github.com/nNm205) — minh2m5@gmail.com
 
-* Advanced document citation highlighting
-* More granular user roles and permissions
-* Background task queue for long-running analysis jobs
-* Evaluation pipeline for RAG answer quality
-* Improved report templates and export formats
-* Deployment configuration for cloud environments
-
----
-
-## 👨‍💻 Author
-
-**Nguyễn Nhật Minh**
-
-* GitHub: https://github.com/nNm205
-* Email: [minh2m5@gmail.com](mailto:minh2m5@gmail.com)
-
----
-
-<div align="center"> 
-
-**If you find this project useful, please consider giving it a star ⭐ .** 
-
-*Built with ☕ and a lot of git commit --amend* 
-
-</div>
+If this project was useful for your work, a star is appreciated.
