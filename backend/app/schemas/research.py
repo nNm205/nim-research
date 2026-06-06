@@ -8,6 +8,25 @@ class ResearchCreate(BaseModel):
     query: str = Field(..., min_length=3, max_length=1000)
     max_results: int = Field(default=10, ge=1, le=50)
 
+
+class AutoResearchCreate(BaseModel):
+    """Body for the auto-research pipeline.
+
+    Combines search + ingest + analyse in one shot. ``max_documents``
+    bounds how many top-ranked results we ingest and analyse. The LLM
+    and embedding overrides flow through to the respective downstream
+    services.
+    """
+
+    query: str = Field(..., min_length=3, max_length=1000)
+    max_results: int = Field(default=10, ge=1, le=50)
+    max_documents: int = Field(default=3, ge=1, le=5)
+
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
+
 class SearchResultBase(BaseModel):
     title: str
     url: str
@@ -54,6 +73,7 @@ class ResearchStatusResponse(BaseModel):
     started_at: datetime
     completed_at: datetime | None
     error_message: str | None
+    progress: dict[str, Any] | None = None
 
 class ResearchResultsResponse(BaseModel):
     session: ResearchResponse
@@ -68,3 +88,7 @@ class ResearchHistoryResponse(BaseModel):
     started_at: datetime
     completed_at: datetime | None
     error_message: str | None
+    # ``progress.mode`` is the only field the FE needs from the history
+    # list (to badge auto-research sessions). The full progress JSON is
+    # only fetched on the status endpoint to keep history payloads small.
+    progress: dict[str, Any] | None = None

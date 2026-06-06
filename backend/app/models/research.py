@@ -72,6 +72,13 @@ class ResearchSession(Base):
         nullable=True
     )
 
+    # Live progress (ResearchProgressTracker writes here). Mirrors the
+    # ``document_analyses.progress`` JSONB column.
+    progress: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
     # relationships
     project = relationship(
         "Project",
