@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,10 +12,27 @@ from app.routes import (
     research,
     analysis,
     reports,
-    knowledge_base
+    knowledge_base,
+    notifications,
 )
+from app.services.stale_recovery import recover_stale_sessions
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Recover any zombie ``running`` rows from a previous crash before
+    accepting traffic. Without this the FE keeps showing live progress
+    panels for sessions whose background task died with the previous
+    process — the user has to manually delete the session to clear it.
+    """
+    try:
+        await recover_stale_sessions()
+    except Exception as e:
+        logger.error(f"Startup recovery failed: {e}")
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,6 +75,7 @@ app.include_router(research.router)
 app.include_router(analysis.router)
 app.include_router(reports.router)
 app.include_router(knowledge_base.router)
+app.include_router(notifications.router)
 
 @app.get("/")
 def root():

@@ -7,3 +7,4 @@ from app.models.report import Report
 from app.models.knowledge_base import KnowledgeBaseArticle, KnowledgeBaseSubmission
 from app.models.document_chunk import DocumentChunk 
 from app.models.chunk_embedding import ChunkEmbedding
+from app.models.notification import Notification

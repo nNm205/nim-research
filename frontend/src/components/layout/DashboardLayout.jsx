@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
+import NotificationCenter from "./NotificationCenter";
 import {
   Home,
   Folder,
@@ -8,7 +9,6 @@ import {
   BarChart3,
   ClipboardList,
   BookOpen,
-  Bell,
   LogOut,
   Settings,
   User,
@@ -119,11 +119,7 @@ const DashboardLayout = ({ children }) => {
 
             <div className="flex items-center gap-4">
               {/* Notifications */}
-              <button className="relative p-2.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors group">
-                <Bell className="w-5 h-5" />
-                <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                <span className="sr-only">Thông báo</span>
-              </button>
+              <NotificationCenter />
 
               {/* Divider */}
               <div className="w-px h-6 bg-slate-200"></div>

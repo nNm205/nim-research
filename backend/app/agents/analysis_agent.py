@@ -561,6 +561,9 @@ class AnalysisAgent:
             if final_state.get("error"):
                 await progress.finalize("failed", final_state["error"])
                 await self._mark_failed(analysis_id, final_state["error"])
+                await self._notify_failed(
+                    analysis_id, document, final_state["error"]
+                )
                 return analysis
 
             try:
@@ -583,6 +586,7 @@ class AnalysisAgent:
                 f"AnalysisAgent: completed analysis {analysis.id} "
                 f"for document {document.id}"
             )
+            await self._notify_completed(analysis_id, document)
 
         except StaleDataError:
             await self.db.rollback()
@@ -600,6 +604,11 @@ class AnalysisAgent:
             except Exception:
                 pass
             await self._mark_failed(analysis_id, str(e))
+            # Notify the project owner. ``document`` may still be None here
+            # if the failure happened before we resolved it — guard with a
+            # ``locals()`` check.
+            doc = locals().get("document")
+            await self._notify_failed(analysis_id, doc, str(e))
             raise
 
         return analysis
@@ -740,3 +749,100 @@ class AnalysisAgent:
 
         await self.db.commit()
         await self.db.refresh(analysis)
+
+
+    # ── Notifications ───────────────────────────────────────────────────────
+
+    async def _notify_completed(
+        self, analysis_id: UUID, document: Document
+    ) -> None:
+        """Push a "phân tích hoàn thành" notification to the project owner.
+
+        We resolve the user via a fresh session because:
+          - the agent's session may have just committed and we don't want
+            to risk a long-running select on it,
+          - this code runs on the success path so there's no rollback to
+            untangle.
+        """
+        await self._notify(
+            analysis_id=analysis_id,
+            document=document,
+            success=True,
+            error=None,
+        )
+
+    async def _notify_failed(
+        self,
+        analysis_id: UUID,
+        document: Document | None,
+        error: str | None,
+    ) -> None:
+        await self._notify(
+            analysis_id=analysis_id,
+            document=document,
+            success=False,
+            error=error,
+        )
+
+    async def _notify(
+        self,
+        *,
+        analysis_id: UUID,
+        document: Document | None,
+        success: bool,
+        error: str | None,
+    ) -> None:
+        from app.database.session import AsyncSessionLocal as _Session
+        from app.models.project import Project
+        from app.services.notification_service import (
+            CATEGORY_ANALYSIS,
+            TYPE_ERROR,
+            TYPE_SUCCESS,
+            create_notification_async,
+        )
+
+        try:
+            project_id = (
+                document.project_id if document is not None else None
+            )
+            user_id = None
+            if project_id is not None:
+                async with _Session() as s:
+                    user_id = await s.scalar(
+                        select(Project.user_id).where(
+                            Project.id == project_id
+                        )
+                    )
+            if user_id is None:
+                # Project gone — drop notification silently. The user
+                # has already deleted the surrounding entity, so a
+                # bell alert would be confusing.
+                return
+
+            doc_title = (document.title if document else None) or "tài liệu"
+            if success:
+                title = "Phân tích tài liệu hoàn thành"
+                message = f"'{doc_title[:120]}' đã được phân tích xong."
+                ntype = TYPE_SUCCESS
+            else:
+                title = "Phân tích tài liệu thất bại"
+                message = (
+                    f"'{doc_title[:120]}': {(error or 'lỗi không xác định')[:200]}"
+                )
+                ntype = TYPE_ERROR
+
+            await create_notification_async(
+                user_id=user_id,
+                title=title,
+                message=message,
+                notification_type=ntype,
+                category=CATEGORY_ANALYSIS,
+                entity_id=analysis_id,
+                entity_kind="analysis",
+                project_id=project_id,
+            )
+        except Exception as e:
+            logger.warning(
+                f"AnalysisAgent: failed to write notification for "
+                f"{analysis_id}: {e}"
+            )

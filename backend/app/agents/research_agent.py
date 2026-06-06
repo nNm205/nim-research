@@ -104,6 +104,9 @@ class ResearchAgent:
                     "completed",
                     message=f"{len(documents)} kết quả",
                 )
+                await self._notify_done(
+                    session, success=True, count=len(documents)
+                )
             else:
                 # Still record results_count so the FE list shows the
                 # right number even before the parent orchestrator
@@ -129,6 +132,8 @@ class ResearchAgent:
             except Exception:
                 pass
             await self._mark_failed(session, error_message=str(e))
+            if self._owns_tracker:
+                await self._notify_done(session, success=False, error=str(e))
             raise
 
         return session
@@ -205,3 +210,73 @@ class ResearchAgent:
             f"ResearchAgent: saved {len(rows)} search results "
             f"for session {session.id}"
         )
+
+
+    # ── Notifications ───────────────────────────────────────────────────────
+
+    async def _notify_done(
+        self,
+        session: ResearchSession,
+        *,
+        success: bool,
+        count: int = 0,
+        error: str | None = None,
+    ) -> None:
+        """Push a "tìm kiếm xong" notification to the project owner.
+
+        Only called for standalone search sessions. Auto-research mode
+        defers the alert to ``AutoResearchService`` which fires at the
+        end of the full pipeline (search + ingest + analyse).
+        """
+        from app.database.session import AsyncSessionLocal as _Session
+        from app.models.project import Project
+        from app.services.notification_service import (
+            CATEGORY_RESEARCH,
+            TYPE_ERROR,
+            TYPE_SUCCESS,
+            create_notification_async,
+        )
+
+        try:
+            async with _Session() as s:
+                user_id = await s.scalar(
+                    select(Project.user_id).where(
+                        Project.id == session.project_id
+                    )
+                )
+            if user_id is None:
+                return
+
+            query = (session.query or "")[:120]
+            if success:
+                title = "Tìm kiếm tài liệu hoàn thành"
+                message = (
+                    f"'{query}' — {count} kết quả đã được lưu."
+                    if query
+                    else f"{count} kết quả đã được lưu."
+                )
+                ntype = TYPE_SUCCESS
+            else:
+                title = "Tìm kiếm tài liệu thất bại"
+                message = (
+                    f"'{query}': {(error or 'lỗi không xác định')[:200]}"
+                    if query
+                    else (error or "lỗi không xác định")[:200]
+                )
+                ntype = TYPE_ERROR
+
+            await create_notification_async(
+                user_id=user_id,
+                title=title,
+                message=message,
+                notification_type=ntype,
+                category=CATEGORY_RESEARCH,
+                entity_id=session.id,
+                entity_kind="research",
+                project_id=session.project_id,
+            )
+        except Exception as e:
+            logger.warning(
+                f"ResearchAgent: failed to write notification for "
+                f"{session.id}: {e}"
+            )

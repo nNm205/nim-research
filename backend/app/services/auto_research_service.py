@@ -57,6 +57,22 @@ _MAX_DOCS_TO_INGEST = 5
 _MAX_DOCS_TO_ANALYSE = 5
 
 
+# Strong refs to fire-and-forget tasks. asyncio's event loop only keeps
+# weak references to tasks; without this set the GC can collect and
+# cancel the coroutine mid-run, which leaves the session stuck at
+# status='running' forever — the exact symptom of "thanh tiến trình vẫn
+# hiển thị sau khi phiên đã kết thúc". See
+# https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _track(task: asyncio.Task) -> asyncio.Task:
+    """Hold a strong reference to ``task`` until it completes."""
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
+
 class AutoResearchService:
     """Orchestrate search → ingest → analyse for a single user request."""
 
@@ -73,14 +89,16 @@ class AutoResearchService:
 
         Returns immediately so the route handler can respond to the FE.
         """
-        asyncio.create_task(
-            self._run_in_background(
-                research_session_id=research_session_id,
-                max_documents=max_documents,
-                embedding_provider=embedding_provider,
-                embedding_model=embedding_model,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
+        _track(
+            asyncio.create_task(
+                self._run_in_background(
+                    research_session_id=research_session_id,
+                    max_documents=max_documents,
+                    embedding_provider=embedding_provider,
+                    embedding_model=embedding_model,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                )
             )
         )
         logger.info(
@@ -109,128 +127,184 @@ class AutoResearchService:
         # writes (the tracker commits on every flush).
         tracker_db = AsyncSessionLocal()
         try:
-            tracker = ResearchProgressTracker(
-                tracker_db, research_session_id, mode="auto"
-            )
-            # Pull the query for the init message.
-            session_row = await tracker_db.scalar(
-                select(ResearchSession).where(
-                    ResearchSession.id == research_session_id
-                )
-            )
-            await tracker.init(query=session_row.query if session_row else None)
-
-            project_id = session_row.project_id if session_row else None
-
-            # ── Stage 1: search ───────────────────────────────────────────
             try:
-                await self._stage_search(
+                await self._run_pipeline(
+                    tracker_db=tracker_db,
                     research_session_id=research_session_id,
-                    tracker=tracker,
-                )
-            except Exception as e:
-                logger.error(
-                    f"AutoResearch: search stage failed for "
-                    f"{research_session_id}: {e}"
-                )
-                await tracker.finalize("failed", f"Tìm kiếm thất bại: {e}")
-                await self._mark_session_terminal(
-                    research_session_id, "failed",
-                    error=f"Tìm kiếm thất bại: {e}",
-                )
-                return
-
-            # ── Stage 2: ingest top-N results ─────────────────────────────
-            try:
-                await tracker.start_stage(
-                    STAGE_INGEST,
-                    detail=f"Nạp top {max_documents} tài liệu",
-                )
-                document_ids = await self._stage_ingest(
-                    research_session_id=research_session_id,
-                    project_id=project_id,
                     max_documents=max_documents,
                     embedding_provider=embedding_provider,
                     embedding_model=embedding_model,
-                    tracker=tracker,
-                )
-                await tracker.finish_stage(
-                    STAGE_INGEST,
-                    message=f"{len(document_ids)} tài liệu thành công",
-                )
-            except Exception as e:
-                logger.error(
-                    f"AutoResearch: ingest stage failed for "
-                    f"{research_session_id}: {e}"
-                )
-                await tracker.fail_stage(STAGE_INGEST, str(e))
-                await tracker.finalize("failed", f"Nạp tài liệu thất bại: {e}")
-                await self._mark_session_terminal(
-                    research_session_id, "failed",
-                    error=f"Nạp tài liệu thất bại: {e}",
-                )
-                return
-
-            if not document_ids:
-                logger.warning(
-                    f"AutoResearch: no documents ingested for "
-                    f"{research_session_id}; skipping analysis"
-                )
-                await tracker.finalize(
-                    "completed",
-                    "Không có tài liệu nào ingest thành công — bỏ qua phân tích",
-                )
-                # Still mark COMPLETED — the search stage finished and
-                # the user has search results, just nothing to analyse.
-                await self._mark_session_terminal(
-                    research_session_id, "completed"
-                )
-                return
-
-            # ── Stage 3: analyse each ingested document ───────────────────
-            try:
-                await tracker.start_stage(
-                    STAGE_ANALYSE,
-                    detail=f"Phân tích {len(document_ids)} tài liệu",
-                )
-                await self._stage_analyse(
-                    document_ids=document_ids,
                     llm_provider=llm_provider,
                     llm_model=llm_model,
-                    tracker=tracker,
                 )
-                await tracker.finish_stage(STAGE_ANALYSE)
-            except Exception as e:
-                logger.error(
-                    f"AutoResearch: analysis stage failed for "
-                    f"{research_session_id}: {e}"
+            except BaseException as e:
+                # Catch BaseException (not just Exception) so even a
+                # CancelledError from a GC race or shutdown gets a
+                # chance to flip the session into a terminal state.
+                # Without this, an unexpected crash would leave the
+                # session stuck at status='running' forever and the FE
+                # progress bar would never go away.
+                logger.exception(
+                    f"AutoResearch: pipeline crashed unexpectedly for "
+                    f"{research_session_id}: {e!r}"
                 )
-                await tracker.fail_stage(STAGE_ANALYSE, str(e))
-                await tracker.finalize("failed", f"Phân tích thất bại: {e}")
-                await self._mark_session_terminal(
-                    research_session_id, "failed",
-                    error=f"Phân tích thất bại: {e}",
-                )
-                return
-
-            # ── Stage 4: done ─────────────────────────────────────────────
-            await tracker.start_stage(
-                STAGE_SAVE,
-                detail="Hoàn tất pipeline",
-            )
-            await tracker.finish_stage(STAGE_SAVE)
-            await tracker.finalize(
-                "completed",
-                f"{len(document_ids)} tài liệu được phân tích",
-            )
-            await self._mark_session_terminal(
-                research_session_id, "completed"
-            )
+                try:
+                    await self._mark_session_terminal(
+                        research_session_id, "failed",
+                        error=f"Pipeline crashed: {type(e).__name__}",
+                    )
+                except Exception as mark_err:
+                    logger.error(
+                        f"AutoResearch: also failed to mark session "
+                        f"{research_session_id} as failed after crash: "
+                        f"{mark_err}"
+                    )
+                # Re-raise hard interrupts (Ctrl+C / SystemExit) so the
+                # process can shut down cleanly. Cancellation from the
+                # event-loop side is allowed to swallow because we've
+                # already recorded the failure on the row.
+                import asyncio as _asyncio
+                if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                    raise
+                if not isinstance(e, (Exception, _asyncio.CancelledError)):
+                    raise
         finally:
             try:
                 await tracker_db.close()
             except Exception:
                 pass
+
+    async def _run_pipeline(
+        self,
+        *,
+        tracker_db,
+        research_session_id: UUID,
+        max_documents: int,
+        embedding_provider: str | None,
+        embedding_model: str | None,
+        llm_provider: str | None,
+        llm_model: str | None,
+    ) -> None:
+        """The pipeline body itself — extracted so the caller can wrap it
+        in a top-level safety net that always lands the session in a
+        terminal state."""
+        tracker = ResearchProgressTracker(
+            tracker_db, research_session_id, mode="auto"
+        )
+        # Pull the query for the init message.
+        session_row = await tracker_db.scalar(
+            select(ResearchSession).where(
+                ResearchSession.id == research_session_id
+            )
+        )
+        await tracker.init(query=session_row.query if session_row else None)
+
+        project_id = session_row.project_id if session_row else None
+
+        # ── Stage 1: search ───────────────────────────────────────────
+        try:
+            await self._stage_search(
+                research_session_id=research_session_id,
+                tracker=tracker,
+            )
+        except Exception as e:
+            logger.error(
+                f"AutoResearch: search stage failed for "
+                f"{research_session_id}: {e}"
+            )
+            await tracker.finalize("failed", f"Tìm kiếm thất bại: {e}")
+            await self._mark_session_terminal(
+                research_session_id, "failed",
+                error=f"Tìm kiếm thất bại: {e}",
+            )
+            return
+
+        # ── Stage 2: ingest top-N results ─────────────────────────────
+        try:
+            await tracker.start_stage(
+                STAGE_INGEST,
+                detail=f"Nạp top {max_documents} tài liệu",
+            )
+            document_ids = await self._stage_ingest(
+                research_session_id=research_session_id,
+                project_id=project_id,
+                max_documents=max_documents,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                tracker=tracker,
+            )
+            await tracker.finish_stage(
+                STAGE_INGEST,
+                message=f"{len(document_ids)} tài liệu thành công",
+            )
+        except Exception as e:
+            logger.error(
+                f"AutoResearch: ingest stage failed for "
+                f"{research_session_id}: {e}"
+            )
+            await tracker.fail_stage(STAGE_INGEST, str(e))
+            await tracker.finalize("failed", f"Nạp tài liệu thất bại: {e}")
+            await self._mark_session_terminal(
+                research_session_id, "failed",
+                error=f"Nạp tài liệu thất bại: {e}",
+            )
+            return
+
+        if not document_ids:
+            logger.warning(
+                f"AutoResearch: no documents ingested for "
+                f"{research_session_id}; skipping analysis"
+            )
+            await tracker.finalize(
+                "completed",
+                "Không có tài liệu nào ingest thành công — bỏ qua phân tích",
+            )
+            # Still mark COMPLETED — the search stage finished and
+            # the user has search results, just nothing to analyse.
+            await self._mark_session_terminal(
+                research_session_id, "completed"
+            )
+            return
+
+        # ── Stage 3: analyse each ingested document ───────────────────
+        try:
+            await tracker.start_stage(
+                STAGE_ANALYSE,
+                detail=f"Phân tích {len(document_ids)} tài liệu",
+            )
+            await self._stage_analyse(
+                document_ids=document_ids,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                tracker=tracker,
+            )
+            await tracker.finish_stage(STAGE_ANALYSE)
+        except Exception as e:
+            logger.error(
+                f"AutoResearch: analysis stage failed for "
+                f"{research_session_id}: {e}"
+            )
+            await tracker.fail_stage(STAGE_ANALYSE, str(e))
+            await tracker.finalize("failed", f"Phân tích thất bại: {e}")
+            await self._mark_session_terminal(
+                research_session_id, "failed",
+                error=f"Phân tích thất bại: {e}",
+            )
+            return
+
+        # ── Stage 4: done ─────────────────────────────────────────────
+        await tracker.start_stage(
+            STAGE_SAVE,
+            detail="Hoàn tất pipeline",
+        )
+        await tracker.finish_stage(STAGE_SAVE)
+        await tracker.finalize(
+            "completed",
+            f"{len(document_ids)} tài liệu được phân tích",
+        )
+        await self._mark_session_terminal(
+            research_session_id, "completed"
+        )
 
     async def _mark_session_terminal(
         self,
@@ -245,14 +319,32 @@ class AutoResearchService:
         stages (ingest + analyse) are still pending. This method is
         the orchestrator's chance to write the final status, including
         when an intermediate stage failed.
+
+        Notifications are written here too — every terminal path goes
+        through this method, so the user gets exactly one bell alert
+        per pipeline run regardless of which stage finished it.
         """
         target = (
             ResearchStatus.COMPLETED.value
             if status == "completed"
             else ResearchStatus.FAILED.value
         )
+        project_id = None
+        query: str | None = None
         try:
             async with AsyncSessionLocal() as db:
+                # We need ``project_id`` + ``query`` for the notification.
+                # Fetch them BEFORE the update so we don't have to read
+                # back from the row we're about to update.
+                row = await db.scalar(
+                    select(ResearchSession).where(
+                        ResearchSession.id == research_session_id
+                    )
+                )
+                if row is not None:
+                    project_id = row.project_id
+                    query = row.query
+
                 stmt = (
                     update(ResearchSession)
                     .where(ResearchSession.id == research_session_id)
@@ -268,6 +360,80 @@ class AutoResearchService:
             logger.warning(
                 f"AutoResearch: failed to flip ResearchSession "
                 f"{research_session_id} status → {status}: {e}"
+            )
+            return
+
+        # Best-effort notification. Errors are swallowed inside
+        # ``create_notification_async`` so we don't need a try/except.
+        await self._notify_done(
+            research_session_id=research_session_id,
+            project_id=project_id,
+            query=query,
+            success=(status == "completed"),
+            error=error,
+        )
+
+    async def _notify_done(
+        self,
+        *,
+        research_session_id: UUID,
+        project_id: UUID | None,
+        query: str | None,
+        success: bool,
+        error: str | None,
+    ) -> None:
+        from app.models.project import Project
+        from app.services.notification_service import (
+            CATEGORY_AUTO_RESEARCH,
+            TYPE_ERROR,
+            TYPE_SUCCESS,
+            create_notification_async,
+        )
+
+        if project_id is None:
+            return
+        try:
+            async with AsyncSessionLocal() as db:
+                user_id = await db.scalar(
+                    select(Project.user_id).where(
+                        Project.id == project_id
+                    )
+                )
+            if user_id is None:
+                return
+
+            q = (query or "")[:120]
+            if success:
+                title = "Nghiên cứu tự động hoàn thành"
+                message = (
+                    f"'{q}' — pipeline (tìm kiếm + nạp + phân tích) đã chạy xong."
+                    if q
+                    else "Pipeline (tìm kiếm + nạp + phân tích) đã chạy xong."
+                )
+                ntype = TYPE_SUCCESS
+            else:
+                title = "Nghiên cứu tự động thất bại"
+                message = (
+                    f"'{q}': {(error or 'lỗi không xác định')[:200]}"
+                    if q
+                    else (error or "lỗi không xác định")[:200]
+                )
+                ntype = TYPE_ERROR
+
+            await create_notification_async(
+                user_id=user_id,
+                title=title,
+                message=message,
+                notification_type=ntype,
+                category=CATEGORY_AUTO_RESEARCH,
+                entity_id=research_session_id,
+                entity_kind="research",
+                project_id=project_id,
+            )
+        except Exception as e:
+            logger.warning(
+                f"AutoResearch: failed to write notification for "
+                f"{research_session_id}: {e}"
             )
 
     # ── Stage 1: search ─────────────────────────────────────────────────────
@@ -487,14 +653,24 @@ def dispatch_auto_research(
     llm_provider: str | None = None,
     llm_model: str | None = None,
 ) -> None:
-    """Fire-and-forget convenience wrapper used by the route handler."""
-    asyncio.create_task(
-        _service.dispatch(
-            research_session_id=research_session_id,
-            max_documents=max_documents,
-            embedding_provider=embedding_provider,
-            embedding_model=embedding_model,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
+    """Fire-and-forget convenience wrapper used by the route handler.
+
+    ``_service.dispatch`` already creates the background task and holds
+    a strong ref via ``_track``; we just need to schedule the call so
+    the route handler doesn't await it. Wrapping ``dispatch`` itself in
+    an extra ``create_task`` would create a task-of-task pair where the
+    outer task isn't held anywhere — exactly the GC-collection bug we
+    just fixed.
+    """
+    _track(
+        asyncio.create_task(
+            _service.dispatch(
+                research_session_id=research_session_id,
+                max_documents=max_documents,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+            )
         )
     )

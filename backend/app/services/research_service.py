@@ -201,10 +201,20 @@ async def _run_agent_in_background(research_session_id: UUID) -> None:
             )
 
 
+# Strong refs to fire-and-forget tasks. asyncio's event loop only keeps
+# *weak* references to tasks (per the docs); without this set the GC can
+# collect and silently cancel the coroutine mid-run, which leaves the
+# ResearchSession row stuck at status='running' forever and the FE
+# stuck on the live progress panel. Same pattern as analysis_service.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
 def dispatch_research_agent(research_session_id: UUID) -> None:
     """
     Fire-and-forget: schedules the agent as an asyncio background task.
     Call this after the HTTP response has been committed.
     """
-    asyncio.create_task(_run_agent_in_background(research_session_id))
+    task = asyncio.create_task(_run_agent_in_background(research_session_id))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
     logger.info(f"ResearchAgent dispatched for session: {research_session_id}")
