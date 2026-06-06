@@ -1,7 +1,7 @@
 from uuid import UUID
 from fastapi import HTTPException, status 
 from sqlalchemy import select 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer, load_only
 from app.utils.logger import logger 
 from app.models.project import Project 
 from app.models.document import Document
@@ -51,6 +51,12 @@ def get_project_documents(
     db: Session,
     project_id: UUID
 ) -> list[Document]:
+    """List endpoint — defers the heavy ``content`` / ``raw_content`` columns.
+
+    A processed PDF can have ``content`` of several hundred KB. Returning it
+    for every row of a list view is a major bandwidth + DB I/O cost. The FE
+    list view only needs metadata (title, source, status, created_at, …).
+    """
 
     logger.info(
         f"Fetching documents for project: {project_id}"
@@ -59,6 +65,12 @@ def get_project_documents(
     try:
         result = db.execute(
             select(Document)
+            .options(
+                # Don't fetch heavy TOAST columns for the list view.
+                defer(Document.content),
+                defer(Document.raw_content),
+                defer(Document.document_metadata),
+            )
             .where(Document.project_id == project_id)
             .order_by(Document.created_at.desc())
         )
@@ -84,6 +96,46 @@ def get_project_documents(
             detail="Internal server error"
         )
 
+def get_user_documents(
+    db: Session,
+    user_id: UUID
+) -> list[Document]:
+    """List ALL documents owned by ``user_id`` across every project.
+
+    Joins ``documents`` to ``projects`` on ``user_id``. The same heavy
+    column deferral as ``get_project_documents`` applies — list views only
+    need metadata.
+    """
+
+    logger.info(f"Fetching all documents for user: {user_id}")
+
+    try:
+        result = db.execute(
+            select(Document)
+            .join(Project, Project.id == Document.project_id)
+            .options(
+                defer(Document.content),
+                defer(Document.raw_content),
+                defer(Document.document_metadata),
+            )
+            .where(Project.user_id == user_id)
+            .order_by(Document.created_at.desc())
+        )
+        documents = result.scalars().all()
+        logger.info(
+            f"Retrieved {len(documents)} documents for user: {user_id}"
+        )
+        return documents
+
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch documents for user {user_id}: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+
 def get_document_by_id(
     db: Session,
     document_id: UUID
@@ -100,7 +152,6 @@ def get_document_by_id(
     )
 
     document = result.scalar_one_or_none()
-
     if not document:
 
         logger.warning(

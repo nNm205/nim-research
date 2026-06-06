@@ -91,13 +91,11 @@ class Document(Base):
     project = relationship(
         "Project",
         back_populates="documents",
-        lazy="selectin"
     )
 
     search_results = relationship(
         "SearchResult",
         back_populates="document",
-        lazy="selectin"
     )
 
     analysis = relationship(
@@ -105,7 +103,6 @@ class Document(Base):
         back_populates="document",
         uselist=False,
         cascade="all, delete-orphan",
-        lazy="selectin"
     )
 
     chunks = relationship(
