@@ -37,6 +37,7 @@ class Settings(BaseSettings):
 
     # Search API 
     SERP_API_KEY: str
+    SEMANTIC_API_KEY: str 
 
     class Config: 
         env_file = ".env"
