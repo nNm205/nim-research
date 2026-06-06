@@ -5,3 +5,4 @@ class ProviderType(str, Enum):
     OPENROUTER = "openrouter"
     OPENAI = "openai"
     CLAUDE = "claude"
+    GEMINI = "gemini"
