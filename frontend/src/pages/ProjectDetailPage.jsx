@@ -5,11 +5,14 @@ import { projectService } from "../services/projectService";
 import { documentService } from "../services/documentService";
 import { analysisService } from "../services/analysisService";
 import { researchService } from "../services/researchService";
+import { reportService } from "../services/reportService";
 import CreateDocumentModal from "../components/documents/CreateDocumentModal";
 import StartAnalysisModal from "../components/analysis/StartAnalysisModal";
 import AutoResearchModal from "../components/projects/AutoResearchModal";
+import CreateReportModal from "../components/reports/CreateReportModal";
 import TopicChipInput, { TopicChipList } from "../components/projects/TopicChipInput";
 import AnalysisCard from "../components/analysis/AnalysisCard";
+import ReportCard from "../components/reports/ReportCard";
 import AnalysisProgressInline from "../components/analysis/AnalysisProgressInline";
 import ResearchProgressPanel from "../components/research/ResearchProgressPanel";
 import {
@@ -55,6 +58,12 @@ const ProjectDetailsPage = () => {
   const [showCreateDocModal, setShowCreateDocModal] = useState(false);
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [showAutoResearchModal, setShowAutoResearchModal] = useState(false);
+  const [showCreateReportModal, setShowCreateReportModal] = useState(false);
+
+  // Reports list for the project — loaded alongside docs / analyses /
+  // research sessions in ``loadAll`` so the Reports panel below mirrors
+  // the Documents and Analyses panels.
+  const [reports, setReports] = useState([]);
 
   // Reload all project-scoped data. Stable callback so it can be used
   // both by the initial-mount effect and by the AutoResearchModal
@@ -63,16 +72,18 @@ const ProjectDetailsPage = () => {
   const loadAll = useCallback(async () => {
     try {
       setLoading(true);
-      const [data, docs, analysesData, sessions] = await Promise.all([
+      const [data, docs, analysesData, sessions, reportsData] = await Promise.all([
         projectService.getProject(projectId),
         documentService.getProjectDocuments(projectId),
         analysisService.getProjectAnalyses(projectId),
         researchService.getSessions(projectId).catch(() => []),
+        reportService.getProjectReports(projectId).catch(() => []),
       ]);
       setProject(data);
       setDocuments(docs || []);
       setAnalyses(analysesData || []);
       setResearchSessions(sessions || []);
+      setReports(reportsData || []);
       setFormData({
         name: data.name,
         description: data.description || "",
@@ -260,6 +271,30 @@ const ProjectDetailsPage = () => {
       text: "Đã bắt đầu phân tích. Mở thẻ để theo dõi tiến trình.",
     });
     setTimeout(() => setMessage({ type: "", text: "" }), 3000);
+  };
+
+  const handleCreateReport = async (_projectId, payload) => {
+    // ``_projectId`` is provided by CreateReportModal but we already
+    // have it pinned via ``lockedProject`` so it always equals projectId.
+    const created = await reportService.createReport(projectId, payload);
+    setReports([created, ...reports]);
+    setShowCreateReportModal(false);
+    setMessage({
+      type: "success",
+      text: "Đã tạo báo cáo. Mở thẻ để xem chi tiết.",
+    });
+    setTimeout(() => setMessage({ type: "", text: "" }), 3000);
+  };
+
+  const handleDeleteReport = async (reportId) => {
+    if (!window.confirm("Bạn có chắc muốn xóa báo cáo này?")) return;
+    try {
+      await reportService.deleteReport(reportId);
+      setReports((prev) => prev.filter((r) => r.id !== reportId));
+    } catch (err) {
+      console.error(err);
+      setError("Không thể xóa báo cáo");
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -528,6 +563,20 @@ const ProjectDetailsPage = () => {
               </button>
 
               <button
+                onClick={() => setShowCreateReportModal(true)}
+                disabled={project.is_archived || documents.length === 0}
+                title={
+                  documents.length === 0
+                    ? "Thêm tài liệu trước khi tạo báo cáo"
+                    : "Tự dựng báo cáo từ Documents + Analysis của dự án"
+                }
+                className="inline-flex items-center gap-2 px-5 py-3 bg-white border border-teal-200 text-teal-700 hover:bg-teal-50 hover:border-teal-300 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl font-semibold transition-all shadow-sm"
+              >
+                <ClipboardList className="w-5 h-5" />
+                Tạo báo cáo
+              </button>
+
+              <button
                 onClick={() => navigate(`/projects/${projectId}/research`)}
                 className="inline-flex items-center gap-2 px-5 py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 rounded-xl font-semibold transition-all shadow-sm"
               >
@@ -638,7 +687,7 @@ const ProjectDetailsPage = () => {
                   <StatItem icon={FileText}      value={stats.docs}      label="Tài liệu" />
                   <StatItem icon={CheckCircle2}  value={stats.processed} label="Đã xử lý" />
                   <StatItem icon={BarChart3}     value={stats.analyses}  label="Phân tích" />
-                  <StatItem icon={ClipboardList} value={project.report_count ?? 0} label="Báo cáo" />
+                  <StatItem icon={ClipboardList} value={reports.length} label="Báo cáo" />
                 </div>
 
                 <Panel
@@ -748,6 +797,65 @@ const ProjectDetailsPage = () => {
                           className="w-full py-3 text-sm text-teal-600 hover:text-teal-700 font-semibold transition-colors border border-dashed border-slate-200 rounded-xl hover:border-teal-300"
                         >
                           Xem thêm {analyses.length - 5} phân tích
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </Panel>
+
+                {/* Reports — same shape as Analyses panel above. The
+                    list is metadata-only because the backend defers
+                    content / html_content / included_documents from
+                    the list endpoint. */}
+                <Panel
+                  id="reports"
+                  title={`Báo cáo (${reports.length})`}
+                  action={
+                    reports.length > 0 && (
+                      <button
+                        onClick={() => navigate(`/reports`)}
+                        className="text-sm text-teal-600 hover:text-teal-700 font-semibold transition-colors"
+                      >
+                        Tất cả báo cáo →
+                      </button>
+                    )
+                  }
+                >
+                  {reports.length === 0 ? (
+                    <div className="text-center py-10">
+                      <ClipboardList className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                      <p className="text-slate-500 font-medium mb-4">
+                        {documents.length === 0
+                          ? "Thêm tài liệu trước khi tạo báo cáo"
+                          : "Chưa có báo cáo nào — hệ thống sẽ tự dựng nội dung từ tài liệu và phân tích"}
+                      </p>
+                      {documents.length > 0 && (
+                        <button
+                          onClick={() => setShowCreateReportModal(true)}
+                          disabled={project.is_archived}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-teal-200 text-teal-700 hover:bg-teal-50 disabled:opacity-50 rounded-xl font-semibold transition-all shadow-sm"
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                          Tạo báo cáo đầu tiên
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-3">
+                      {reports.slice(0, 4).map((r) => (
+                        <ReportCard
+                          key={r.id}
+                          report={r}
+                          onClick={() => navigate(`/reports/${r.id}`)}
+                          onDelete={handleDeleteReport}
+                        />
+                      ))}
+                      {reports.length > 4 && (
+                        <button
+                          onClick={() => navigate(`/reports`)}
+                          className="w-full py-3 text-sm text-teal-600 hover:text-teal-700 font-semibold transition-colors border border-dashed border-slate-200 rounded-xl hover:border-teal-300"
+                        >
+                          Xem thêm {reports.length - 4} báo cáo
                         </button>
                       )}
                     </div>
@@ -960,6 +1068,17 @@ const ProjectDetailsPage = () => {
             });
             setTimeout(() => setMessage({ type: "", text: "" }), 6000);
           }}
+        />
+      )}
+
+      {showCreateReportModal && project && (
+        <CreateReportModal
+          // Pin the modal to this project so it hides the project
+          // picker entirely. The user already chose the project when
+          // they navigated to this page.
+          lockedProject={project}
+          onClose={() => setShowCreateReportModal(false)}
+          onCreate={handleCreateReport}
         />
       )}
     </DashboardLayout>
