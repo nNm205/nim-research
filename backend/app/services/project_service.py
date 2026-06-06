@@ -20,46 +20,86 @@ def _annotate_counts(
     """Attach scalar count attributes to each project in the list.
 
     Counts ``_document_count`` / ``_research_session_count`` /
-    ``_analysis_count`` / ``_report_count`` are computed in one query per
-    relation (``GROUP BY project_id``) instead of pulling full child
-    rows just to call ``len()`` on them.
+    ``_analysis_count`` / ``_report_count`` are computed in **one** SQL
+    statement that LEFT JOINs four ``GROUP BY`` subqueries against
+    ``projects``. Previously we issued four separate queries — fine
+    when the DB lives next to the API but a meaningful round-trip cost
+    on Supabase / Supavisor where every query traverses the pooler.
 
-    ``_analysis_count`` requires a join through ``Document`` because
-    DocumentAnalysis has no direct ``project_id`` column — analyses live
-    one level removed, attached to a document.
+    ``_analysis_count`` requires a sub-join through ``Document`` because
+    ``DocumentAnalysis`` has no direct ``project_id`` column — analyses
+    live one level removed, attached to a document.
     """
     if not projects:
         return projects
 
     project_ids = [p.id for p in projects]
 
-    def _count(model, fk):
-        rows = db.execute(
-            select(fk, func.count(model.id))
-            .where(fk.in_(project_ids))
-            .group_by(fk)
-        ).all()
-        return {pid: cnt for pid, cnt in rows}
-
-    doc_counts = _count(Document, Document.project_id)
-    rs_counts = _count(ResearchSession, ResearchSession.project_id)
-    rep_counts = _count(Report, Report.project_id)
-
-    # Analyses: join through Document. We GROUP BY ``Document.project_id``
-    # so the result is keyed by project.
-    analysis_rows = db.execute(
-        select(Document.project_id, func.count(DocumentAnalysis.id))
+    # Per-relation aggregate subqueries. Each returns
+    # ``(project_id, count)`` rows.
+    doc_sub = (
+        select(
+            Document.project_id.label("pid"),
+            func.count(Document.id).label("cnt"),
+        )
+        .where(Document.project_id.in_(project_ids))
+        .group_by(Document.project_id)
+        .subquery("doc_counts")
+    )
+    rs_sub = (
+        select(
+            ResearchSession.project_id.label("pid"),
+            func.count(ResearchSession.id).label("cnt"),
+        )
+        .where(ResearchSession.project_id.in_(project_ids))
+        .group_by(ResearchSession.project_id)
+        .subquery("rs_counts")
+    )
+    rep_sub = (
+        select(
+            Report.project_id.label("pid"),
+            func.count(Report.id).label("cnt"),
+        )
+        .where(Report.project_id.in_(project_ids))
+        .group_by(Report.project_id)
+        .subquery("rep_counts")
+    )
+    ana_sub = (
+        select(
+            Document.project_id.label("pid"),
+            func.count(DocumentAnalysis.id).label("cnt"),
+        )
         .join(Document, Document.id == DocumentAnalysis.document_id)
         .where(Document.project_id.in_(project_ids))
         .group_by(Document.project_id)
-    ).all()
-    analysis_counts = {pid: cnt for pid, cnt in analysis_rows}
+        .subquery("ana_counts")
+    )
 
+    # Single SELECT — one round-trip — fanning out via LEFT JOINs.
+    # ``coalesce(..., 0)`` so a project with zero docs / analyses still
+    # comes back as 0 instead of NULL.
+    rows = db.execute(
+        select(
+            Project.id,
+            func.coalesce(doc_sub.c.cnt, 0),
+            func.coalesce(rs_sub.c.cnt, 0),
+            func.coalesce(rep_sub.c.cnt, 0),
+            func.coalesce(ana_sub.c.cnt, 0),
+        )
+        .where(Project.id.in_(project_ids))
+        .outerjoin(doc_sub, doc_sub.c.pid == Project.id)
+        .outerjoin(rs_sub, rs_sub.c.pid == Project.id)
+        .outerjoin(rep_sub, rep_sub.c.pid == Project.id)
+        .outerjoin(ana_sub, ana_sub.c.pid == Project.id)
+    ).all()
+
+    counts: dict = {pid: (d, r, rp, a) for pid, d, r, rp, a in rows}
     for p in projects:
-        p._document_count = doc_counts.get(p.id, 0)
-        p._research_session_count = rs_counts.get(p.id, 0)
-        p._analysis_count = analysis_counts.get(p.id, 0)
-        p._report_count = rep_counts.get(p.id, 0)
+        d, r, rp, a = counts.get(p.id, (0, 0, 0, 0))
+        p._document_count = d
+        p._research_session_count = r
+        p._report_count = rp
+        p._analysis_count = a
 
     return projects
 
