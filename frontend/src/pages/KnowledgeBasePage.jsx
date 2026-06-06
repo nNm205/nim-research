@@ -20,6 +20,10 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
+  Loader,
+  PenLine,
+  ListChecks,
+  Send,
 } from "lucide-react";
 
 // ─── Category config ──────────────────────────────────────────────────────────
@@ -58,32 +62,120 @@ const CATEGORY_OPTIONS = ["research", "analysis", "methodology", "tools", "gener
 
 // ─── Submit Modal ─────────────────────────────────────────────────────────────
 
-const SubmitArticleModal = ({ onClose, onSubmit }) => {
+/**
+ * SubmitArticleModal — visual language matches StartAnalysisModal /
+ * AutoResearchModal / CreateReportModal:
+ *
+ *   - rounded-2xl frame, sticky top header with icon block + subtitle
+ *   - section labels with small icon
+ *   - category picker as visual radio cards (one per CATEGORY_OPTION)
+ *   - tags as chip editor — Enter / "," to add, Backspace to remove
+ *   - sticky footer with Cancel + primary CTA showing a Send icon
+ *
+ * The submit/admin-create handler (passed via ``onSubmit``) returns
+ * after the API succeeds; we don't optimistic-render here because the
+ * parent toggles a flash message + reloads the list itself.
+ */
+
+const SubmitArticleModal = ({ onClose, onSubmit, isAdmin = false }) => {
   const [form, setForm] = useState({
     title: "",
     excerpt: "",
     content: "",
     category: "research",
-    tags: "",
   });
+  const [tags, setTags] = useState([]);
+  const [tagDraft, setTagDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Close on Escape so the modal feels native.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && !loading) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [loading, onClose]);
 
   const handleChange = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
 
+  // Chip editor helpers — kept inline to avoid a one-off extra component.
+  const addTagFromDraft = () => {
+    const value = tagDraft.trim().replace(/,+$/, "").trim();
+    if (!value) return;
+    if (tags.some((t) => t.toLowerCase() === value.toLowerCase())) {
+      setTagDraft("");
+      return;
+    }
+    setTags([...tags, value]);
+    setTagDraft("");
+  };
+
+  const handleTagKeyDown = (e) => {
+    if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+      if (tagDraft.trim()) {
+        e.preventDefault();
+        addTagFromDraft();
+      }
+    } else if (e.key === "Backspace" && !tagDraft && tags.length > 0) {
+      setTags(tags.slice(0, -1));
+    }
+  };
+
+  const handleTagPaste = (e) => {
+    const pasted = e.clipboardData.getData("text");
+    if (!pasted.includes(",")) return;
+    e.preventDefault();
+    const items = pasted.split(",").map((s) => s.trim()).filter(Boolean);
+    const merged = [...tags];
+    for (const item of items) {
+      if (!merged.some((t) => t.toLowerCase() === item.toLowerCase())) {
+        merged.push(item);
+      }
+    }
+    setTags(merged);
+    setTagDraft("");
+  };
+
+  const removeTag = (idx) => setTags(tags.filter((_, i) => i !== idx));
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+
+    if (!form.title.trim() || form.title.trim().length < 5) {
+      setError("Tiêu đề phải có ít nhất 5 ký tự");
+      return;
+    }
+    if (!form.excerpt.trim()) {
+      setError("Vui lòng nhập tóm tắt cho bài viết");
+      return;
+    }
+    if (!form.content.trim() || form.content.trim().length < 30) {
+      setError("Nội dung phải có ít nhất 30 ký tự");
+      return;
+    }
+
     setLoading(true);
     try {
-      const payload = {
+      // Accept any tag still typed in the input but not yet confirmed.
+      const finalTags = [...tags];
+      const draft = tagDraft.trim();
+      if (
+        draft &&
+        !finalTags.some((t) => t.toLowerCase() === draft.toLowerCase())
+      ) {
+        finalTags.push(draft);
+      }
+      await onSubmit({
         ...form,
-        tags: form.tags
-          ? form.tags.split(",").map((t) => t.trim()).filter(Boolean)
-          : [],
-      };
-      await onSubmit(payload);
+        title: form.title.trim(),
+        excerpt: form.excerpt.trim(),
+        content: form.content.trim(),
+        tags: finalTags,
+      });
     } catch (err) {
       setError(err.response?.data?.detail || "Không thể gửi bài viết");
     } finally {
@@ -91,127 +183,272 @@ const SubmitArticleModal = ({ onClose, onSubmit }) => {
     }
   };
 
+  const headerSubtitle = isAdmin
+    ? "Bài viết sẽ được xuất bản công khai ngay lập tức"
+    : "Bài viết sẽ được gửi đến Admin để duyệt";
+
+  const submitLabel = loading
+    ? isAdmin
+      ? "Đang xuất bản..."
+      : "Đang gửi..."
+    : isAdmin
+    ? "Xuất bản bài viết"
+    : "Gửi để duyệt";
+
   return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
-        {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-slate-200 px-8 py-6 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">Gửi bài viết</h2>
+    <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+        {/* ── Header ──────────────────────────────────────────────────── */}
+        <div className="border-b border-slate-200 px-8 py-5 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center flex-shrink-0">
+              <PenLine className="w-5 h-5 text-white" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold text-slate-900">
+                {isAdmin ? "Thêm bài viết mới" : "Gửi bài viết"}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">{headerSubtitle}</p>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 p-1 hover:bg-slate-100 rounded-lg transition-colors"
+            disabled={loading}
+            className="text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded-lg flex-shrink-0 ml-3 disabled:opacity-50"
+            aria-label="Đóng"
           >
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        {/* Body */}
-        <form onSubmit={handleSubmit} className="p-8 space-y-6">
-          {error && (
-            <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium">
-              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              {error}
+        {/* ── Body — scrollable, scrollbar hidden via no-scrollbar ─── */}
+        <div className="flex-1 overflow-y-auto no-scrollbar">
+          <form onSubmit={handleSubmit} className="p-8 space-y-6">
+            {error && (
+              <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {/* 1 — Title */}
+            <div>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-2">
+                <FileText className="w-4 h-4 text-teal-600" />
+                Tiêu đề <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                name="title"
+                required
+                minLength={5}
+                maxLength={500}
+                value={form.title}
+                onChange={handleChange}
+                placeholder="Ví dụ: Cách viết phần Related Work hiệu quả"
+                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all text-slate-900 text-sm"
+              />
             </div>
-          )}
 
-          <div>
-            <label className="block text-sm font-semibold text-slate-900 mb-2">
-              Tiêu đề <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              name="title"
-              required
-              minLength={5}
-              maxLength={500}
-              value={form.title}
-              onChange={handleChange}
-              placeholder="Tiêu đề bài viết..."
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-            />
-          </div>
+            {/* 2 — Category */}
+            <div>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-3">
+                <ListChecks className="w-4 h-4 text-teal-600" />
+                Danh mục <span className="text-red-500">*</span>
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {CATEGORY_OPTIONS.map((cat) => {
+                  const Icon = CATEGORY_ICONS[cat] || BookOpen;
+                  const colors = CATEGORY_COLORS[cat] || CATEGORY_COLORS.general;
+                  const active = form.category === cat;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setForm({ ...form, category: cat })}
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ${
+                        active
+                          ? "border-teal-500 bg-teal-50 text-teal-700"
+                          : "border-slate-200 text-slate-600 hover:border-slate-300"
+                      }`}
+                    >
+                      <span
+                        className={`p-1 rounded-md ${
+                          active ? "bg-teal-100" : colors.bg
+                        }`}
+                      >
+                        <Icon
+                          className={`w-3.5 h-3.5 ${
+                            active ? "text-teal-700" : colors.icon
+                          }`}
+                        />
+                      </span>
+                      <span className="truncate">
+                        {CATEGORY_LABELS[cat] || cat}
+                      </span>
+                      {active && (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-teal-600 ml-auto flex-shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-slate-900 mb-2">
-              Danh mục <span className="text-red-500">*</span>
-            </label>
-            <select
-              name="category"
-              value={form.category}
-              onChange={handleChange}
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-            >
-              {CATEGORY_OPTIONS.map((cat) => (
-                <option key={cat} value={cat}>
-                  {CATEGORY_LABELS[cat]}
-                </option>
-              ))}
-            </select>
-          </div>
+            {/* 3 — Excerpt */}
+            <div>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-2">
+                <BookOpen className="w-4 h-4 text-teal-600" />
+                Tóm tắt <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                name="excerpt"
+                required
+                rows={3}
+                value={form.excerpt}
+                onChange={handleChange}
+                placeholder="Mô tả ngắn gọn bài viết — 1-3 câu, hiển thị ở danh sách"
+                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all resize-none text-slate-900 text-sm"
+              />
+              <p className="text-xs text-slate-500 mt-2">
+                {form.excerpt.trim().length} ký tự — phần này hiện ngay dưới
+                tiêu đề ở danh sách.
+              </p>
+            </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-slate-900 mb-2">
-              Tóm tắt <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              name="excerpt"
-              required
-              rows={3}
-              value={form.excerpt}
-              onChange={handleChange}
-              placeholder="Mô tả ngắn gọn nội dung bài viết..."
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all resize-none"
-            />
-          </div>
+            {/* 4 — Content */}
+            <div>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-2">
+                <PenLine className="w-4 h-4 text-teal-600" />
+                Nội dung <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                name="content"
+                required
+                rows={10}
+                value={form.content}
+                onChange={handleChange}
+                placeholder="Nội dung chi tiết — hỗ trợ Markdown (heading, list, code...)"
+                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all resize-y font-mono text-sm bg-slate-50/40 text-slate-900"
+              />
+              <p className="text-xs text-slate-500 mt-2">
+                Hỗ trợ Markdown — heading (# ##), list (-, 1.), code (```),
+                link ([tên](url)), bold/italic.
+              </p>
+            </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-slate-900 mb-2">
-              Nội dung <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              name="content"
-              required
-              rows={8}
-              value={form.content}
-              onChange={handleChange}
-              placeholder="Nội dung chi tiết của bài viết..."
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all resize-none"
-            />
-          </div>
+            {/* 5 — Tags */}
+            <div>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-2">
+                <Tag className="w-4 h-4 text-teal-600" />
+                Tags
+              </label>
+              <div
+                onClick={(e) => {
+                  const input = e.currentTarget.querySelector("input");
+                  input?.focus();
+                }}
+                className="flex flex-wrap items-center gap-2 px-3 py-2 border border-slate-300 rounded-xl bg-white focus-within:ring-2 focus-within:ring-teal-500 focus-within:border-transparent transition-all cursor-text min-h-[3rem]"
+              >
+                {tags.map((t, idx) => (
+                  <span
+                    key={`${t}-${idx}`}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-violet-50 ring-1 ring-violet-200 text-violet-700 rounded-lg text-sm font-medium"
+                  >
+                    <Tag className="w-3 h-3" />
+                    {t}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeTag(idx);
+                      }}
+                      className="ml-0.5 text-violet-400 hover:text-violet-700 transition-colors"
+                      aria-label={`Xóa tag ${t}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+                <input
+                  type="text"
+                  value={tagDraft}
+                  onChange={(e) => setTagDraft(e.target.value)}
+                  onKeyDown={handleTagKeyDown}
+                  onPaste={handleTagPaste}
+                  onBlur={() => tagDraft.trim() && addTagFromDraft()}
+                  placeholder={
+                    tags.length === 0
+                      ? "AI, Methods, Survey..."
+                      : "Thêm tag khác..."
+                  }
+                  className="flex-1 min-w-[10rem] outline-none bg-transparent text-slate-900 placeholder:text-slate-400 py-1 text-sm"
+                />
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                Nhấn{" "}
+                <kbd className="px-1.5 py-0.5 bg-slate-100 rounded font-mono text-[10px]">
+                  Enter
+                </kbd>{" "}
+                hoặc{" "}
+                <kbd className="px-1.5 py-0.5 bg-slate-100 rounded font-mono text-[10px]">
+                  ,
+                </kbd>{" "}
+                để thêm;{" "}
+                <kbd className="px-1.5 py-0.5 bg-slate-100 rounded font-mono text-[10px]">
+                  Backspace
+                </kbd>{" "}
+                để xóa tag cuối.
+              </p>
+            </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-slate-900 mb-2">
-              Tags
-            </label>
-            <input
-              type="text"
-              name="tags"
-              value={form.tags}
-              onChange={handleChange}
-              placeholder="AI, Research, Methods..."
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-            />
-          </div>
+            {/* Workflow hint */}
+            {!isAdmin && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+                <p className="font-semibold mb-1">⏳ Quy trình duyệt</p>
+                <p className="text-amber-700">
+                  Bài viết sẽ ở trạng thái "Chờ duyệt" cho đến khi Admin xem và
+                  phản hồi. Bạn theo dõi trạng thái ở mục "Bài viết đã gửi của
+                  tôi" trên trang chính.
+                </p>
+              </div>
+            )}
 
-          <div className="flex items-center justify-end gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-6 py-3 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 font-semibold transition-colors"
-            >
-              Hủy
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-6 py-3 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 disabled:opacity-60 text-white rounded-xl font-semibold transition-all shadow-lg hover:shadow-xl"
-            >
-              {loading ? "Đang gửi..." : "Gửi bài viết"}
-            </button>
-          </div>
-        </form>
+            {/* Actions — inline with the form, scroll together with content */}
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={loading}
+                className="px-6 py-3 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 font-semibold transition-colors disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                disabled={
+                  loading ||
+                  !form.title.trim() ||
+                  !form.excerpt.trim() ||
+                  !form.content.trim()
+                }
+                className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl font-semibold transition-all shadow-lg"
+              >
+                {loading ? (
+                  <>
+                    <Loader className="w-4 h-4 animate-spin" />
+                    {submitLabel}
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    {submitLabel}
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );
@@ -504,6 +741,7 @@ const KnowledgeBasePage = () => {
       {/* Submit Modal */}
       {showSubmitModal && (
         <SubmitArticleModal
+          isAdmin={isAdmin}
           onClose={() => setShowSubmitModal(false)}
           onSubmit={handleSubmitArticle}
         />
