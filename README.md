@@ -18,7 +18,7 @@ A full-stack platform that ingests research papers, extracts structured insights
 
 ---
 
-## What it does
+## 🎯 What it does
 
 Researchers spend hours on the boring parts of literature work — searching across databases, downloading PDFs, scrolling through them, taking notes section by section, then connecting the dots and writing it all up. NIM Research automates each of those steps and puts them on one pipeline.
 
@@ -31,7 +31,7 @@ Researchers spend hours on the boring parts of literature work — searching acr
 
 ---
 
-## Screenshots
+## 🖼️ Screenshots
 
 <table>
   <tr>
@@ -70,9 +70,9 @@ Researchers spend hours on the boring parts of literature work — searching acr
 
 ---
 
-## Features
+## ✨ Features
 
-### Document ingestion
+### 📥 Document ingestion
 
 - Upload PDF or HTML (drag-drop, 50 MB cap) **or** paste a URL — system fetches and parses it
 - 2-column-aware PDF extraction (PyMuPDF block mode + reading-order column clustering)
@@ -81,7 +81,7 @@ Researchers spend hours on the boring parts of literature work — searching acr
 - Equations detected by math-symbol density + LaTeX cues, rendered with KaTeX in the UI
 - Section-aware chunker tags every chunk with `section_title`, `section_number`, `subsections` so downstream agents can map chunks to sections deterministically
 
-### Section-grounded analysis
+### 🧠 Section-grounded analysis
 
 - LangGraph pipeline: `load_chunks → map_sections → build_outline → analyse_sections → synthesize → persist`
 - One LLM call per section produces a structured insight object: summary, purpose, key points, claims (with evidence type + confidence), methods, data/experiments, tables, formulas, notable terms, critique, open questions, quotes
@@ -90,7 +90,7 @@ Researchers spend hours on the boring parts of literature work — searching acr
 - Heuristic fallback when LLM fails so a card never renders empty
 - Total: **~N+1 LLM calls** for an N-section paper
 
-### Multi-source search + auto-pipeline
+### 🔎 Multi-source search + auto-pipeline
 
 - Parallel search across **arXiv**, **Google Scholar**, **Semantic Scholar** (1 RPS rate-limited with API key)
 - Re-ranked by semantic relevance to query
@@ -99,7 +99,7 @@ Researchers spend hours on the boring parts of literature work — searching acr
 - Standalone analyses also get a live progress panel
 - Background tasks held by strong refs so the GC can't silently cancel a running pipeline mid-flight; a `lifespan` startup hook flips any leftover `running` rows from a previous crash to `failed` so the live progress panel never gets stuck
 
-### Report generator
+### 📝 Report generator
 
 - 4 templates: **research summary**, **literature review**, **data analysis**, **custom**
 - Deterministic composition over the structured fields the analysis pipeline already extracted (key findings, methodology, limitations, future work, narrative synthesis, …) — **zero LLM calls** at report time, so regeneration is free and reproducible
@@ -108,20 +108,20 @@ Researchers spend hours on the boring parts of literature work — searching acr
 - Per-document tag chips and a clickable source-link chip with host + external-link icon, matching the project's chip style throughout the app
 - Reports are scoped to a project (created from `ProjectDetailPage`) and aggregated cross-project on `/reports` for browsing
 
-### Notifications
+### 🔔 Notifications
 
 - Persistent `notifications` table per user — survives backend restarts and tab switches
 - Agents push a row whenever a long-running task finalises: analysis completed/failed, research search done, auto-research pipeline done, report created
 - Bell dropdown in the header polls every 15 s with badge count, optimistic mark-as-read, deep-links into the source entity, and per-row delete
 - Categorised by workflow (analysis · research · auto_research · report · document) so the UI can colour-code rows
 
-### LLM + embedding flexibility
+### 🔌 LLM + embedding flexibility
 
 - 5 LLM providers: **Gemini**, **Groq**, **OpenAI**, **Claude**, **OpenRouter** — pick one per analysis
 - 3 embedding providers: **HuggingFace**, **Jina**, **Google AI**
 - Free-tier-aware retry: parses `retryDelay` from Gemini 429 responses, exponential backoff for others, sequential analyses inside the auto-research orchestrator
 
-### UX
+### 🎨 UX
 
 - Tag-chip topic editor with keyboard shortcuts (Enter / comma / Backspace)
 - Cross-project Documents / Analyses / Reports pages — same filter-chips + search + grid pattern across all three
@@ -130,7 +130,7 @@ Researchers spend hours on the boring parts of literature work — searching acr
 - KaTeX-rendered math with error boundary fallback to raw LaTeX
 - Modals share one consistent shape: `bg-black/20` backdrop, sticky header with icon block, `no-scrollbar` scrollable body, inline submit/cancel actions
 
-### Performance
+### ⚡ Performance
 
 - Async DB session compatible with **Supabase Supavisor pooler** (per-call UUID-named prepared statements, statement cache disabled)
 - pgvector for semantic chunk search
@@ -142,9 +142,9 @@ Researchers spend hours on the boring parts of literature work — searching acr
 
 ---
 
-## Tech stack
+## 🛠️ Tech stack
 
-### Backend
+### ⚙️ Backend
 - **FastAPI** with async/await throughout, lifespan hook for stale-task recovery
 - **SQLAlchemy 2.0** + **asyncpg** for the async path, **psycopg2** for sync admin paths
 - **PostgreSQL 15** with **pgvector** and **pg_trgm** extensions
@@ -154,25 +154,25 @@ Researchers spend hours on the boring parts of literature work — searching acr
 - **python-docx** for native Word export
 - **httpx** for outbound HTTP (Unpaywall, S2 API)
 
-### Frontend
+### 💻 Frontend
 - **React 19** + **Vite** + **Tailwind 4**
 - **React Router v7**
 - **react-katex** for math rendering
 - **Lucide** icons
 - Polling-based progress + notification updates (3 s for in-flight tasks, 15 s for the notification bell)
 
-### LLM / Embedding providers (pluggable)
+### 🤖 LLM / Embedding providers (pluggable)
 - LLM: Google Gemini, Groq, OpenAI, Anthropic Claude, OpenRouter
 - Embedding: HuggingFace Inference, Jina AI, Google AI
 - Vector store: **pgvector** (built into PostgreSQL — no separate service needed)
 
-### Infrastructure
+### 🐳 Infrastructure
 - Docker Compose for local development
 - Environment-based configuration via `.env`
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 ┌────────────────┐                                ┌────────────────┐
@@ -213,16 +213,16 @@ Researchers spend hours on the boring parts of literature work — searching acr
 
 ---
 
-## Quick start
+## 🚀 Quick start
 
-### Prerequisites
+### 📋 Prerequisites
 
 - Python 3.11+
 - Node.js 18+
 - PostgreSQL 15 with `pgvector` and `pg_trgm` extensions enabled (or use [Supabase](https://supabase.com/) which has both pre-installed)
 - A free Gemini, Groq, or OpenAI API key (Gemini's free tier is enough to try the platform)
 
-### Backend
+### ⚙️ Backend
 
 ```bash
 cd backend
@@ -249,7 +249,7 @@ uvicorn app.main:app --reload --port 8000
 
 API at `http://localhost:8000`. Swagger UI at `http://localhost:8000/docs`.
 
-### Frontend
+### 💻 Frontend
 
 ```bash
 cd frontend
@@ -263,7 +263,7 @@ App at `http://localhost:5173`.
 
 ---
 
-## Environment
+## 🔐 Environment
 
 Backend `.env` (only the values the platform actually reads):
 
@@ -313,7 +313,7 @@ VITE_API_URL=http://localhost:8000
 
 ---
 
-## API surface
+## 🌐 API surface
 
 Interactive docs at `http://localhost:8000/docs`. Highlights:
 
@@ -338,7 +338,7 @@ Interactive docs at `http://localhost:8000/docs`. Highlights:
 
 ---
 
-## Project structure
+## 📁 Project structure
 
 ```
 nim-eng/
