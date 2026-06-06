@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+/* Hide native scrollbars where the design intentionally avoids the visual
+ * weight of a scrollbar (modal panes, certain in-page lists). The element
+ * is still scrollable via wheel / touch / keyboard. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

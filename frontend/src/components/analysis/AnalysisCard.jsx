@@ -1,6 +1,6 @@
-import { CheckCircle2, Clock, AlertCircle, Loader } from "lucide-react";
+import { CheckCircle2, Clock, AlertCircle, Loader, Folder } from "lucide-react";
 
-const AnalysisCard = ({ analysis, onClick }) => {
+const AnalysisCard = ({ analysis, onClick, projectName }) => {
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
     const date = new Date(dateString);
@@ -77,9 +77,17 @@ const AnalysisCard = ({ analysis, onClick }) => {
               <h3 className="text-lg font-bold text-slate-900 group-hover:text-teal-600 transition-colors mb-1 truncate">
                 {analysis.document_title || `Phân tích ${analysis.id.slice(0, 8)}`}
               </h3>
-              <p className="text-xs text-slate-500 font-medium">
-                ID: {analysis.id}
-              </p>
+              <div className="flex items-center gap-3 flex-wrap">
+                {projectName && (
+                  <span className="inline-flex items-center gap-1 text-xs text-slate-600 font-medium">
+                    <Folder className="w-3 h-3" />
+                    {projectName}
+                  </span>
+                )}
+                <p className="text-xs text-slate-500 font-mono truncate">
+                  ID: {analysis.id.slice(0, 8)}…
+                </p>
+              </div>
             </div>
           </div>
 

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/layout/DashboardLayout";
 import { researchService } from "../services/researchService";
 import { projectService } from "../services/projectService";
-import { documentService } from "../services/documentService";
+import IngestSearchResultModal from "../components/research/IngestSearchResultModal";
 import {
   ArrowLeft,
   Search,
@@ -16,10 +16,8 @@ import {
   Globe,
   GraduationCap,
   ChevronRight,
-  Plus,
   FolderPlus,
   History,
-  XCircle,
   RefreshCw,
 } from "lucide-react";
 
@@ -349,19 +347,60 @@ const ResearchPage = () => {
               </div>
             )}
 
-            {/* Status Banner */}
-            {statusCfg && (
-              <div className={`flex items-center gap-3 px-5 py-3 rounded-xl border text-sm ${statusCfg.color}`}>
-                <StatusIcon className={`w-4 h-4 flex-shrink-0 ${isRunning ? "animate-spin" : ""}`} />
+            {/* Compact status pill — replaces the full progress panel
+                that used to live here. The unified live-progress view
+                now lives on the ProjectDetailPage so the user has a
+                single place to watch all running pipelines. Here we
+                only show a small status indicator so the page is not
+                empty while a session is in flight. */}
+            {statusCfg && status !== "failed" && (
+              <div
+                className={`flex items-center gap-3 px-5 py-3 rounded-xl border text-sm ${statusCfg.color}`}
+              >
+                <StatusIcon
+                  className={`w-4 h-4 flex-shrink-0 ${
+                    status === "running" || status === "pending"
+                      ? "animate-spin"
+                      : ""
+                  }`}
+                />
                 <div className="flex-1">
                   <span className="font-semibold">{statusCfg.label}</span>
                   {session?.query && (
-                    <span className="ml-2 opacity-75">— "{session.query}"</span>
+                    <span className="ml-2 opacity-75">
+                      — "{session.query}"
+                    </span>
                   )}
                 </div>
                 {status === "completed" && (
-                  <span className="font-semibold">{results.length} kết quả</span>
+                  <span className="font-semibold">
+                    {results.length} kết quả
+                  </span>
                 )}
+                {(status === "running" || status === "pending") && (
+                  <a
+                    href={`/projects/${projectId}`}
+                    className="text-xs font-semibold underline hover:opacity-80"
+                  >
+                    Xem tiến trình →
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* Failed sessions still show their error inline so the user
+                can see what went wrong without leaving the page. */}
+            {status === "failed" && (
+              <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 px-5 py-3 rounded-xl text-sm font-medium">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold mb-1">Phiên tìm kiếm thất bại</p>
+                  {session?.error_message && (
+                    <p className="text-xs text-red-600 break-words">
+                      {session.error_message}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
@@ -414,20 +453,25 @@ const ResearchPage = () => {
 
 // ─── Session Item (sidebar) ───────────────────────────────────────────────────
 
+// React's purity lint flags `Date.now()` inside render. Pre-compute on
+// module init; the list is short enough that "as of page load" precision
+// is fine.
+const _PAGE_LOAD_MS = Date.now();
+
+const formatTimeAgo = (dateStr) => {
+  const diff = _PAGE_LOAD_MS - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "vừa xong";
+  if (mins < 60) return `${mins} phút trước`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} giờ trước`;
+  return `${Math.floor(hrs / 24)} ngày trước`;
+};
+
 const SessionItem = ({ sess, isActive, onClick }) => {
   const cfg = STATUS_CONFIG[sess.status] || STATUS_CONFIG.pending;
   const Icon = cfg.icon;
   const isRunning = sess.status === "pending" || sess.status === "running";
-
-  const timeAgo = (dateStr) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "vừa xong";
-    if (mins < 60) return `${mins} phút trước`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs} giờ trước`;
-    return `${Math.floor(hrs / 24)} ngày trước`;
-  };
 
   return (
     <button
@@ -448,7 +492,7 @@ const SessionItem = ({ sess, isActive, onClick }) => {
           {cfg.label}
         </span>
         <span className="text-xs text-slate-400 flex-shrink-0">
-          {timeAgo(sess.started_at)}
+          {formatTimeAgo(sess.started_at)}
         </span>
       </div>
 
@@ -465,31 +509,12 @@ const SessionItem = ({ sess, isActive, onClick }) => {
 const ResultCard = ({ result, projectId, isAdded, onAdded }) => {
   const sourceCfg = SOURCE_LABELS[result.source] || SOURCE_LABELS.web;
   const SourceIcon = sourceCfg.icon;
-  const [addState, setAddState] = useState("idle");
-  const [addError, setAddError] = useState("");
+  const [showIngest, setShowIngest] = useState(false);
 
-  const handleAddToProject = async () => {
-    setAddState("loading");
-    setAddError("");
-    try {
-      if (result.pdf_url) {
-        await documentService.ingestPDF(projectId, result.pdf_url);
-      } else {
-        await documentService.createDocument(projectId, {
-          title: result.title,
-          source_url: result.url,
-          source_type: result.source === "web" ? "web" : "academic",
-        });
-      }
-      setAddState("done");
-      onAdded();
-    } catch (err) {
-      setAddState("error");
-      setAddError(err.response?.data?.detail || "Không thể thêm tài liệu vào dự án");
-    }
-  };
-
-  const alreadyAdded = isAdded || addState === "done";
+  // A result is "already added" if either the prop says so (live add this
+  // session) or the backend returned ``document_id != null`` from a previous
+  // session.
+  const alreadyAdded = isAdded || !!result.document_id;
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow">
@@ -523,25 +548,48 @@ const ResultCard = ({ result, projectId, isAdded, onAdded }) => {
             {result.doi && <span className="font-mono">DOI: {result.doi}</span>}
             {result.relevance_score != null && (
               <span>
-                Relevance: <span className="font-semibold text-teal-600">{(result.relevance_score * 100).toFixed(0)}%</span>
+                Liên quan:{" "}
+                <span className="font-semibold text-teal-600">
+                  {(result.relevance_score * 100).toFixed(0)}%
+                </span>
               </span>
             )}
           </div>
         </div>
 
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
-          <a href={result.url} target="_blank" rel="noopener noreferrer"
-            className="text-slate-400 hover:text-teal-600 transition-colors" title="Mở trang nguồn">
+          <a
+            href={result.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-slate-400 hover:text-teal-600 transition-colors"
+            title="Mở trang nguồn"
+          >
             <ExternalLink className="w-4 h-4" />
           </a>
-          <AddButton state={addState} alreadyAdded={alreadyAdded} hasPdf={!!result.pdf_url} onClick={handleAddToProject} />
+          {alreadyAdded ? (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+              <CheckCircle2 className="w-3 h-3" /> Đã thêm
+            </span>
+          ) : (
+            <button
+              onClick={() => setShowIngest(true)}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-teal-600 bg-teal-50 hover:bg-teal-100 border border-teal-200 hover:border-teal-300 px-2.5 py-1 rounded-lg transition-colors"
+            >
+              <FolderPlus className="w-3 h-3" /> Thêm vào dự án
+            </button>
+          )}
         </div>
       </div>
 
       {result.pdf_url && (
         <div className="mt-3 pt-3 border-t border-slate-100">
-          <a href={result.pdf_url} target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs text-red-600 hover:text-red-700 font-semibold transition-colors">
+          <a
+            href={result.pdf_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs text-red-600 hover:text-red-700 font-semibold transition-colors"
+          >
             <BookOpen className="w-3.5 h-3.5" />
             Xem PDF
             <ChevronRight className="w-3 h-3" />
@@ -549,40 +597,18 @@ const ResultCard = ({ result, projectId, isAdded, onAdded }) => {
         </div>
       )}
 
-      {addState === "error" && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-          {addError}
-        </div>
+      {showIngest && (
+        <IngestSearchResultModal
+          result={result}
+          projectId={projectId}
+          onClose={() => setShowIngest(false)}
+          onIngested={() => {
+            setShowIngest(false);
+            onAdded();
+          }}
+        />
       )}
     </div>
-  );
-};
-
-// ─── Add Button ───────────────────────────────────────────────────────────────
-
-const AddButton = ({ state, alreadyAdded, hasPdf, onClick }) => {
-  if (alreadyAdded) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
-        <CheckCircle2 className="w-3 h-3" /> Đã thêm
-      </span>
-    );
-  }
-  if (state === "loading") {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
-        <Loader2 className="w-3 h-3 animate-spin" />
-        {hasPdf ? "Đang xử lý..." : "Đang thêm..."}
-      </span>
-    );
-  }
-  return (
-    <button onClick={onClick}
-      title={hasPdf ? "Tải PDF, parse và embed vào dự án" : "Lưu metadata vào dự án"}
-      className="inline-flex items-center gap-1 text-xs font-semibold text-teal-600 bg-teal-50 hover:bg-teal-100 border border-teal-200 hover:border-teal-300 px-2.5 py-1 rounded-lg transition-colors">
-      {hasPdf ? <><FolderPlus className="w-3 h-3" /> Thêm + Ingest PDF</> : <><Plus className="w-3 h-3" /> Thêm vào dự án</>}
-    </button>
   );
 };
 

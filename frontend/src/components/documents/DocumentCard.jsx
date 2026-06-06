@@ -1,4 +1,4 @@
-import { FileText, Link2, CheckCircle2, Clock, Globe, GraduationCap, Upload, BookOpen } from "lucide-react";
+import { FileText, Link2, CheckCircle2, Clock, Globe, GraduationCap, Upload, BookOpen, Folder } from "lucide-react";
 
 const SOURCE_TYPE_CONFIG = {
   web:      { label: "Trang web", icon: Globe,         color: "text-blue-600",   bg: "bg-blue-50",   border: "border-blue-200"   },
@@ -10,7 +10,7 @@ const SOURCE_TYPE_CONFIG = {
 const getSourceConfig = (sourceType) =>
   SOURCE_TYPE_CONFIG[sourceType] || { label: sourceType, icon: FileText, color: "text-slate-600", bg: "bg-slate-50", border: "border-slate-200" };
 
-const DocumentCard = ({ document, onClick }) => {
+const DocumentCard = ({ document, onClick, projectName }) => {
   const formatDate = (dateString) => {
     const date = new Date(dateString);
     return date.toLocaleDateString("vi-VN", {
@@ -92,10 +92,19 @@ const DocumentCard = ({ document, onClick }) => {
 
       {/* Footer */}
       <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          {projectName && (
+            <span
+              className="inline-flex items-center gap-1 text-xs text-slate-500 font-medium truncate"
+              title={projectName}
+            >
+              <Folder className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">{projectName}</span>
+            </span>
+          )}
           {document.relevance_score !== null && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 font-medium">Độ liên quan:</span>
+              <span className="text-xs text-slate-500 font-medium">Liên quan:</span>
               <div className="flex items-center gap-1">
                 <div className="w-8 h-1.5 bg-slate-200 rounded-full overflow-hidden">
                   <div
@@ -110,7 +119,7 @@ const DocumentCard = ({ document, onClick }) => {
             </div>
           )}
         </div>
-        <span className="text-xs text-slate-500 font-medium">
+        <span className="text-xs text-slate-500 font-medium flex-shrink-0">
           {formatDate(document.created_at)}
         </span>
       </div>

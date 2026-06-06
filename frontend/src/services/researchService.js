@@ -10,6 +10,17 @@ export const researchService = {
     return response.data;
   },
 
+  // Kick off the auto-research pipeline: search → ingest top-N → analyse.
+  // Returns the ResearchSession row immediately; results stream into the
+  // project's documents and analyses tables as the pipeline progresses.
+  startAutoResearch: async (projectId, payload) => {
+    const response = await api.post(
+      `/api/v1/projects/${projectId}/auto-research`,
+      payload,
+    );
+    return response.data;
+  },
+
   // Get all past sessions for a project (history)
   getSessions: async (projectId) => {
     const response = await api.get(`/api/v1/projects/${projectId}/research`);

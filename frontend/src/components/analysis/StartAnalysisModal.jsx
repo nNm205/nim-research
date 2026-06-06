@@ -1,10 +1,59 @@
-import { useState } from "react";
-import { X, CheckCircle2, Loader } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { X, CheckCircle2, Loader, Sparkles, Zap } from "lucide-react";
+import { analysisService } from "../../services/analysisService";
 
 const StartAnalysisModal = ({ documents, onClose, onStart }) => {
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
+  const [providers, setProviders] = useState([]);
+  const [providersLoading, setProvidersLoading] = useState(true);
+  const [llmProvider, setLlmProvider] = useState("");
+  const [llmModel, setLlmModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // ── Load LLM provider catalog on mount ───────────────────────────────────
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const catalog = await analysisService.getLLMProviders();
+        if (!alive) return;
+        setProviders(catalog);
+        // Pick a sensible default: first provider's recommended model.
+        const firstProvider = catalog[0];
+        if (firstProvider) {
+          setLlmProvider(firstProvider.value);
+          const recommended =
+            firstProvider.models.find((m) => m.recommended) ||
+            firstProvider.models[0];
+          if (recommended) setLlmModel(recommended.value);
+        }
+      } catch (err) {
+        console.error("Failed to load LLM providers:", err);
+        if (alive) setError("Không tải được danh sách LLM provider");
+      } finally {
+        if (alive) setProvidersLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const currentProvider = useMemo(
+    () => providers.find((p) => p.value === llmProvider),
+    [providers, llmProvider]
+  );
+
+  const handleProviderChange = (value) => {
+    setLlmProvider(value);
+    const provider = providers.find((p) => p.value === value);
+    if (provider) {
+      const recommended =
+        provider.models.find((m) => m.recommended) || provider.models[0];
+      setLlmModel(recommended ? recommended.value : "");
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -12,16 +61,18 @@ const StartAnalysisModal = ({ documents, onClose, onStart }) => {
       setError("Vui lòng chọn tài liệu");
       return;
     }
+    if (!llmProvider || !llmModel) {
+      setError("Vui lòng chọn provider và model LLM");
+      return;
+    }
 
     setError("");
     setLoading(true);
 
     try {
-      await onStart(selectedDocumentId);
+      await onStart(selectedDocumentId, llmProvider, llmModel);
     } catch (err) {
-      setError(
-        err.response?.data?.detail || "Không thể bắt đầu phân tích"
-      );
+      setError(err.response?.data?.detail || "Không thể bắt đầu phân tích");
     } finally {
       setLoading(false);
     }
@@ -31,14 +82,14 @@ const StartAnalysisModal = ({ documents, onClose, onStart }) => {
   const unprocessedDocs = documents.filter((d) => !d.processed);
 
   return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+    <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl">
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-slate-200 px-8 py-6 flex items-center justify-between">
+        <div className="sticky top-0 bg-white border-b border-slate-200 px-8 py-5 flex items-center justify-between z-10">
           <div>
             <h2 className="text-2xl font-bold text-slate-900">Bắt đầu phân tích</h2>
             <p className="text-sm text-slate-600 mt-1">
-              Chọn tài liệu để phân tích bằng AI
+              Chọn tài liệu và mô hình LLM để phân tích
             </p>
           </div>
           <button
@@ -58,11 +109,10 @@ const StartAnalysisModal = ({ documents, onClose, onStart }) => {
             </div>
           )}
 
-          {/* Document Selection */}
+          {/* ── Document Selection ─────────────────────────────────────── */}
           <div>
             <label className="block text-sm font-semibold text-slate-900 mb-4">
-              Chọn tài liệu để phân tích{" "}
-              <span className="text-red-500">*</span>
+              Chọn tài liệu để phân tích <span className="text-red-500">*</span>
             </label>
 
             {processedDocs.length === 0 && unprocessedDocs.length === 0 && (
@@ -71,7 +121,6 @@ const StartAnalysisModal = ({ documents, onClose, onStart }) => {
               </div>
             )}
 
-            {/* Processed Documents */}
             {processedDocs.length > 0 && (
               <div className="space-y-2 mb-6">
                 <p className="text-xs text-slate-600 font-semibold uppercase tracking-wide">
@@ -89,7 +138,6 @@ const StartAnalysisModal = ({ documents, onClose, onStart }) => {
               </div>
             )}
 
-            {/* Unprocessed Documents */}
             {unprocessedDocs.length > 0 && (
               <div className="space-y-2">
                 <p className="text-xs text-slate-600 font-semibold uppercase tracking-wide">
@@ -108,45 +156,135 @@ const StartAnalysisModal = ({ documents, onClose, onStart }) => {
             )}
           </div>
 
+          {/* ── LLM Provider Selection ─────────────────────────────────── */}
+          <div>
+            <label className="block text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-teal-600" />
+              Mô hình LLM <span className="text-red-500">*</span>
+            </label>
+            <p className="text-xs text-slate-500 mb-4">
+              Chọn provider và model để cân bằng chất lượng, tốc độ và quota
+            </p>
+
+            {providersLoading && (
+              <div className="flex items-center gap-2 text-sm text-slate-500 py-3">
+                <Loader className="w-4 h-4 animate-spin" />
+                Đang tải danh sách provider...
+              </div>
+            )}
+
+            {!providersLoading && providers.length > 0 && (
+              <div className="space-y-4">
+                {/* Provider tabs */}
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
+                    Provider
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {providers.map((p) => {
+                      const active = llmProvider === p.value;
+                      return (
+                        <button
+                          type="button"
+                          key={p.value}
+                          onClick={() => handleProviderChange(p.value)}
+                          className={`text-left rounded-xl border-2 px-3 py-2.5 transition-all ${
+                            active
+                              ? "border-teal-500 bg-teal-50"
+                              : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="font-semibold text-slate-900 text-sm">
+                            {p.label}
+                          </div>
+                          <div className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
+                            {p.description}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Model selector */}
+                {currentProvider && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
+                      Model
+                    </p>
+                    <div className="space-y-2">
+                      {currentProvider.models.map((m) => {
+                        const active = llmModel === m.value;
+                        return (
+                          <label
+                            key={m.value}
+                            className={`flex items-start gap-3 p-3 border-2 rounded-xl cursor-pointer transition-all ${
+                              active
+                                ? "border-teal-500 bg-teal-50"
+                                : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="llm_model"
+                              value={m.value}
+                              checked={active}
+                              onChange={(e) => setLlmModel(e.target.value)}
+                              className="mt-1 w-4 h-4 text-teal-600 cursor-pointer"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-semibold text-slate-900 text-sm">
+                                  {m.label}
+                                </p>
+                                {m.recommended && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px] font-bold uppercase">
+                                    <Zap className="w-3 h-3" />
+                                    khuyên dùng
+                                  </span>
+                                )}
+                              </div>
+                              {m.description && (
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                  {m.description}
+                                </p>
+                              )}
+                              <p className="text-[11px] text-slate-400 font-mono mt-1">
+                                {m.value}
+                              </p>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Info Box */}
-          <div className="bg-teal-50 border border-teal-200 rounded-xl p-6">
+          <div className="bg-teal-50 border border-teal-200 rounded-xl p-5">
             <div className="flex items-start gap-3">
-              <span className="text-xl">ℹ️</span>
+              <Sparkles className="w-5 h-5 text-teal-600 flex-shrink-0 mt-0.5" />
               <div className="text-sm text-teal-900">
-                <p className="font-semibold mb-3">
-                  Phân tích sẽ cung cấp:
-                </p>
-                <ul className="space-y-2">
-                  <li className="flex items-start gap-2">
-                    <span className="text-teal-600 font-bold mt-0.5">✓</span>
-                    <span>Tóm tắt nội dung chính</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-teal-600 font-bold mt-0.5">✓</span>
-                    <span>Trích xuất các thực thể quan trọng</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-teal-600 font-bold mt-0.5">✓</span>
-                    <span>Từ khóa chính và chủ đề</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-teal-600 font-bold mt-0.5">✓</span>
-                    <span>Phân tích cảm xúc</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-teal-600 font-bold mt-0.5">✓</span>
-                    <span>Các phát hiện và insight quan trọng</span>
-                  </li>
+                <p className="font-semibold mb-2">Phân tích sẽ cung cấp:</p>
+                <ul className="space-y-1.5 text-xs">
+                  <li>· Cấu trúc tài liệu (outline) và tổng hợp xuyên phần</li>
+                  <li>· Mỗi phần có claim + bằng chứng + critique + trích dẫn gốc</li>
+                  <li>· Câu hỏi nghiên cứu, đóng góp mới, hạn chế</li>
+                  <li>· Tóm tắt điều hành cuối cùng</li>
                 </ul>
               </div>
             </div>
           </div>
 
-          {/* Processing Time Info */}
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          {/* Processing time hint */}
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
             <p className="text-xs text-blue-800">
-              <span className="font-semibold">💡 Mẹo:</span> Thời gian xử lý
-              thường mất 2-5 phút tùy theo độ dài của tài liệu
+              <span className="font-semibold">💡 Mẹo:</span> Gemini free tier
+              giới hạn 5 yêu cầu/phút nên có thể chậm 3-5 phút. Groq nhanh hơn
+              nhiều nhưng chất lượng JSON output đôi khi kém ổn định hơn Gemini.
             </p>
           </div>
 
@@ -161,7 +299,13 @@ const StartAnalysisModal = ({ documents, onClose, onStart }) => {
             </button>
             <button
               type="submit"
-              disabled={loading || !selectedDocumentId}
+              disabled={
+                loading ||
+                providersLoading ||
+                !selectedDocumentId ||
+                !llmProvider ||
+                !llmModel
+              }
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 disabled:opacity-60 text-white rounded-xl font-semibold transition-all shadow-lg hover:shadow-xl disabled:shadow-none"
             >
               {loading ? (
@@ -171,7 +315,7 @@ const StartAnalysisModal = ({ documents, onClose, onStart }) => {
                 </>
               ) : (
                 <>
-                  <span>🔍</span>
+                  <Sparkles className="w-5 h-5" />
                   <span>Bắt đầu phân tích</span>
                 </>
               )}

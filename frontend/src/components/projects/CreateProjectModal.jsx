@@ -1,13 +1,19 @@
 import { useState } from "react";
 import { X } from "lucide-react";
+import TopicChipInput from "./TopicChipInput";
 
+/**
+ * Modal that creates a new project.
+ *
+ * Topic input uses the shared TopicChipInput so the create / edit /
+ * detail-view chip styling stays consistent.
+ */
 const CreateProjectModal = ({ onClose, onCreate }) => {
-  const [formData, setFormData] = useState({
-    name: "",
-    description: "",
-    topic: "",
-    research_scope: "",
-  });
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [researchScope, setResearchScope] = useState("");
+  const [topics, setTopics] = useState([]); // array of strings
+  const [topicDraft, setTopicDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -16,8 +22,17 @@ const CreateProjectModal = ({ onClose, onCreate }) => {
     setError("");
     setLoading(true);
 
+    // Accept any chip the user typed but didn't confirm with Enter.
+    let finalTopics = topics;
+    if (topicDraft.trim()) finalTopics = [...topics, topicDraft.trim()];
+
     try {
-      await onCreate(formData);
+      await onCreate({
+        name,
+        description,
+        topic: finalTopics.join(", "),
+        research_scope: researchScope,
+      });
     } catch (err) {
       setError(err.response?.data?.detail || "Không thể tạo dự án");
     } finally {
@@ -25,21 +40,12 @@ const CreateProjectModal = ({ onClose, onCreate }) => {
     }
   };
 
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
-  };
-
   return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+    <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-slate-200 px-8 py-6 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">Tạo dự án mới</h2>
-          </div>
+        <div className="border-b border-slate-200 px-8 py-5 flex items-center justify-between flex-shrink-0">
+          <h2 className="text-2xl font-bold text-slate-900">Tạo dự án mới</h2>
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded-lg"
@@ -48,79 +54,72 @@ const CreateProjectModal = ({ onClose, onCreate }) => {
           </button>
         </div>
 
-        {/* Body */}
-        <form onSubmit={handleSubmit} className="p-8 space-y-6">
+        {/* Body — scrollable but scrollbar hidden */}
+        <form
+          onSubmit={handleSubmit}
+          className="flex-1 overflow-y-auto no-scrollbar p-8 space-y-6"
+        >
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium">
               {error}
             </div>
           )}
 
-          {/* Project Name */}
           <div>
             <label className="block text-sm font-semibold text-slate-900 mb-2">
               Tên dự án <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
-              name="name"
               required
               minLength={3}
               maxLength={255}
-              value={formData.name}
-              onChange={handleChange}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 focus:border-transparent transition-all text-slate-900"
               placeholder="Ví dụ: Nghiên cứu ảnh hưởng của AI tới giáo dục"
             />
           </div>
 
-          {/* Topic */}
           <div>
             <label className="block text-sm font-semibold text-slate-900 mb-2">
               Chủ đề <span className="text-slate-400">(Tùy chọn)</span>
             </label>
-            <input
-              type="text"
-              name="topic"
-              maxLength={500}
-              value={formData.topic}
-              onChange={handleChange}
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 focus:border-transparent transition-all text-slate-900"
-              placeholder="Ví dụ: Artificial Intelligence, Education Technology, Machine Learning"
+            <TopicChipInput
+              topics={topics}
+              draft={topicDraft}
+              onTopicsChange={setTopics}
+              onDraftChange={setTopicDraft}
             />
           </div>
 
-          {/* Description */}
           <div>
             <label className="block text-sm font-semibold text-slate-900 mb-2">
               Mô tả <span className="text-slate-400">(Tùy chọn)</span>
             </label>
             <textarea
-              name="description"
               rows={4}
-              value={formData.description}
-              onChange={handleChange}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
               className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 focus:border-transparent transition-all resize-none text-slate-900"
               placeholder="Mô tả chi tiết về nội dung, mục tiêu và ý nghĩa của dự án nghiên cứu..."
             />
           </div>
 
-          {/* Research Scope */}
           <div>
             <label className="block text-sm font-semibold text-slate-900 mb-2">
-              Phạm vi nghiên cứu <span className="text-slate-400">(Tùy chọn)</span>
+              Phạm vi nghiên cứu{" "}
+              <span className="text-slate-400">(Tùy chọn)</span>
             </label>
             <textarea
-              name="research_scope"
               rows={4}
-              value={formData.research_scope}
-              onChange={handleChange}
+              value={researchScope}
+              onChange={(e) => setResearchScope(e.target.value)}
               className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 focus:border-transparent transition-all resize-none text-slate-900"
               placeholder="Xác định phạm vi, giới hạn, các giả thuyết và mục tiêu cụ thể của dự án..."
             />
           </div>
 
-          {/* Actions */}
           <div className="flex items-center justify-end gap-3 pt-6 border-t border-slate-200">
             <button
               type="button"
