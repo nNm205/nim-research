@@ -370,8 +370,19 @@ nim-eng/
 
 ---
 
-## Author
+## 👨‍💻 Author
 
-**Nguyễn Nhật Minh** — [@nNm205](https://github.com/nNm205) — minh2m5@gmail.com
+**Nguyễn Nhật Minh**
 
-If this project was useful for your work, a star is appreciated.
+* GitHub: https://github.com/nNm205
+* Email: [minh2m5@gmail.com](mailto:minh2m5@gmail.com)
+
+---
+
+<div align="center"> 
+
+**If you find this project useful, please consider giving it a star ⭐ .** 
+
+*Built with ☕ and a lot of git commit --amend* 
+
+</div>
