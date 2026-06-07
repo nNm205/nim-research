@@ -12,6 +12,7 @@ from app.routes import (
     research,
     analysis,
     reports,
+    synthesis,
     knowledge_base,
     notifications,
 )
@@ -74,6 +75,7 @@ app.include_router(documents.all_router)
 app.include_router(research.router)
 app.include_router(analysis.router)
 app.include_router(reports.router)
+app.include_router(synthesis.router)
 app.include_router(knowledge_base.router)
 app.include_router(notifications.router)
 

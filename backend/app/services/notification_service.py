@@ -46,6 +46,8 @@ CATEGORY_RESEARCH = "research"
 CATEGORY_AUTO_RESEARCH = "auto_research"
 CATEGORY_ANALYSIS = "analysis"
 CATEGORY_REPORT = "report"
+CATEGORY_SYNTHESIS = "synthesis"
+CATEGORY_QA = "qa"
 CATEGORY_DOCUMENT = "document"
 CATEGORY_GENERAL = "general"
 

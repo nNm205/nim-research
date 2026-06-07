@@ -30,3 +30,13 @@ from app.schemas.report import (
     ReportResponse,
     ReportListResponse 
 )
+from app.schemas.synthesis import (
+    SynthesisStartRequest,
+    SynthesisStatusResponse,
+    SynthesisResultResponse,
+)
+from app.schemas.qa import (
+    QAStartRequest,
+    QAStatusResponse,
+    QAReportResponse,
+)

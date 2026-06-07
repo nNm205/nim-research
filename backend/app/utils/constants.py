@@ -28,6 +28,30 @@ class ReportType(str, Enum):
     CUSTOM = "custom"
 
 
+class SynthesisStatus(str, Enum):
+    """Status of the cross-document SynthesisAgent run on a Report."""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class QAStatus(str, Enum):
+    """Status of the QualityAssuranceAgent run on a Report."""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class QAVerdict(str, Enum):
+    """Overall verdict produced by the QualityAssuranceAgent."""
+    EXCELLENT = "excellent"     # >= 90
+    GOOD = "good"                # 75-89
+    NEEDS_REVIEW = "needs_review"  # 60-74
+    POOR = "poor"                # < 60
+
+
 class DocumentSourceType(str, Enum):
     WEB = "web"
     ACADEMIC = "academic"

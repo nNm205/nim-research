@@ -2,6 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/layout/DashboardLayout";
 import { reportService } from "../services/reportService";
+import { qaService } from "../services/qaService";
+import AIEnhancementPanel from "../components/reports/AIEnhancementPanel";
+import QAReportModal from "../components/reports/QAReportModal";
+import { useReportEnhancement } from "../hooks/useReportEnhancement";
 import {
   ArrowLeft,
   Trash2,
@@ -118,6 +122,70 @@ const ReportDetailPage = () => {
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const downloadMenuRef = useRef(null);
 
+  // ── AI Enhancement (Synthesis + QA) ────────────────────────────────
+  // Polls /synthesis/status and /qa/status every 3 s while either
+  // pipeline is in flight, then stops automatically. The hook also
+  // exposes ``refresh()`` which we call after dispatching a pipeline so
+  // we don't have to wait for the next tick to see "pending".
+  const enhancement = useReportEnhancement(reportId);
+  const [qaModalReport, setQaModalReport] = useState(null);
+
+  // When QA finishes we want to surface the score on the panel. The
+  // status endpoint only returns ``qa_progress`` (light) — the full
+  // ``qa_report`` lives on the detail endpoint. Pull it once after
+  // completion so the panel can show the score badge.
+  const [qaFullReport, setQaFullReport] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const status = enhancement.qa?.qa_status;
+    if (status !== "completed") {
+      if (qaFullReport) setQaFullReport(null);
+      return undefined;
+    }
+    (async () => {
+      try {
+        const data = await qaService.getReport(reportId);
+        if (!cancelled) setQaFullReport(data?.qa_report || null);
+      } catch (err) {
+        console.error("Failed to fetch QA report", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enhancement.qa?.qa_status, enhancement.qa?.qa_completed_at, reportId, qaFullReport]);
+
+  // After Synthesis completes the cached HTML/Markdown body changes —
+  // pull the full report so the preview pane reflects the new content.
+  const [lastSynCompletedAt, setLastSynCompletedAt] = useState(null);
+  useEffect(() => {
+    const completedAt = enhancement.synthesis?.synthesis_completed_at;
+    const status = enhancement.synthesis?.synthesis_status;
+    if (status !== "completed" || !completedAt) return;
+    if (completedAt === lastSynCompletedAt) return;
+    setLastSynCompletedAt(completedAt);
+    // Refetch report; ignore errors silently.
+    (async () => {
+      try {
+        const data = await reportService.getReport(reportId);
+        setReport(data);
+        setFormData({
+          title: data.title,
+          report_type: data.report_type,
+          content: data.content || "",
+          status: data.status,
+        });
+      } catch (err) {
+        console.error("Failed to refresh report after synthesis", err);
+      }
+    })();
+  }, [
+    enhancement.synthesis?.synthesis_status,
+    enhancement.synthesis?.synthesis_completed_at,
+    lastSynCompletedAt,
+    reportId,
+  ]);
+
   useEffect(() => {
     loadReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -168,8 +236,33 @@ const ReportDetailPage = () => {
     setApiLoading(true);
     setError("");
 
+    // Only send fields the user actually changed. Sending the full
+    // formData on every save makes the backend think the user wants to
+    // pin the body to the current text — which then suppresses auto-
+    // regeneration when only title or type changed, and leaves the
+    // cached HTML preview stale because the markdown body never moves.
+    // The diff-only patch keeps the backend's three branches (regen
+    // from data / re-render from edited markdown / metadata-only)
+    // distinguishable.
+    const patch = {};
+    if (formData.title !== report.title) patch.title = formData.title;
+    if (formData.report_type !== report.report_type) {
+      patch.report_type = formData.report_type;
+    }
+    if (formData.status !== report.status) patch.status = formData.status;
+    if ((formData.content || "") !== (report.content || "")) {
+      patch.content = formData.content;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      flashSuccess("Không có thay đổi nào để lưu");
+      setIsEditing(false);
+      setApiLoading(false);
+      return;
+    }
+
     try {
-      const updated = await reportService.updateReport(reportId, formData);
+      const updated = await reportService.updateReport(reportId, patch);
       flashSuccess("Cập nhật báo cáo thành công");
       setReport(updated);
       setFormData({
@@ -553,6 +646,19 @@ const ReportDetailPage = () => {
 
             {/* Right — sidebar */}
             <div className="space-y-6">
+              {/* AI Enhancement card — Synthesis + QA */}
+              <AIEnhancementPanel
+                reportId={reportId}
+                synthesis={enhancement.synthesis}
+                qa={{
+                  ...(enhancement.qa || {}),
+                  qa_report: qaFullReport,
+                }}
+                onRefresh={enhancement.refresh}
+                onOpenQAReport={(qr) => setQaModalReport(qr)}
+                onAfterSynthesis={loadReport}
+              />
+
               {/* Metadata card */}
               <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
                 <h3 className="text-sm font-semibold text-slate-600 mb-5 uppercase tracking-wide">
@@ -766,6 +872,15 @@ const ReportDetailPage = () => {
           </div>
         )}
       </div>
+
+      {/* ── QA Report Modal (full-screen, mounted at page root) ───── */}
+      {qaModalReport && (
+        <QAReportModal
+          qaReport={qaModalReport}
+          reportTitle={report?.title}
+          onClose={() => setQaModalReport(null)}
+        />
+      )}
 
       {/* ── Delete confirmation ──────────────────────────────────── */}
       {showDeleteConfirm && (
