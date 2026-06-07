@@ -69,14 +69,6 @@ def _list_html(items: Iterable[str], *, ordered: bool = False) -> str:
 # Inline SVG icons — the report HTML is self-contained so we can't pull
 # from lucide-react. These are the same shapes Lucide renders, written
 # as SVG strings with currentColor so CSS can theme them.
-_TAG_ICON_SVG = (
-    '<svg class="tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-    'aria-hidden="true">'
-    '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/>'
-    '<circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>'
-    '</svg>'
-)
 
 _LINK_ICON_SVG = (
     '<svg class="src-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
@@ -101,7 +93,7 @@ def _tag_row_html(items: Iterable[str]) -> str:
     if not items:
         return ""
     pills = "".join(
-        f'<span class="report-tag">{_TAG_ICON_SVG}{_esc(i)}</span>'
+        f'<span class="report-tag">{_esc(i)}</span>'
         for i in items
     )
     return f'<div class="report-tag-row">{pills}</div>'
@@ -206,19 +198,39 @@ def _cover_md(ctx: ReportContext) -> str:
     return "\n".join(lines)
 
 
+def _topic_chips_html(topic_string: str | None) -> str:
+    """Render a comma-separated topic string as a chip row.
+
+    Project topics live as a comma-joined string (the FE TopicChipInput
+    serialises to the same shape as ProjectCard). Splitting on commas
+    here lets us render the same chip pattern on the report cover so
+    the visual language stays consistent between the project list and
+    the generated reports.
+    """
+    if not topic_string:
+        return ""
+    chips = [t.strip() for t in topic_string.split(",") if t.strip()]
+    if not chips:
+        return ""
+    pills = "".join(
+        f'<span class="report-tag">{_esc(t)}</span>' for t in chips
+    )
+    return f'<div class="report-tag-row cover-topics">{pills}</div>'
+
+
 def _cover_html(ctx: ReportContext) -> str:
     label = _REPORT_TYPE_LABEL_VI.get(ctx.report_type, ctx.report_type)
     n_total = ctx.total_documents
     n_analyzed = len(ctx.documents_with_analysis)
 
-    subtitle_bits: list[str] = []
+    # Topic comes through as comma-separated chips (matches ProjectCard).
+    # Description is rendered as a paragraph since it's prose, not tags.
     if ctx.project_topic:
-        subtitle_bits.append(_esc(ctx.project_topic))
+        subtitle = _topic_chips_html(ctx.project_topic)
     elif ctx.project_description:
-        subtitle_bits.append(_esc(ctx.project_description))
-    subtitle = (
-        f'<p class="subtitle">{subtitle_bits[0]}</p>' if subtitle_bits else ""
-    )
+        subtitle = f'<p class="subtitle">{_esc(ctx.project_description)}</p>'
+    else:
+        subtitle = ""
 
     return f"""
 <header class="report-cover">

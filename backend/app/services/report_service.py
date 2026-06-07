@@ -26,8 +26,45 @@ from app.models.project import Project
 from app.models.report import Report
 from app.schemas.report import ReportCreate, ReportUpdate
 from app.services.report_generator import generate_report_content
+from app.services.report_generator.styles import wrap_html
 from app.utils.constants import ReportStatus, ReportType
 from app.utils.logger import logger
+
+
+def _render_user_markdown_to_html(markdown_text: str, title: str) -> str:
+    """Convert user-edited Markdown into themed HTML.
+
+    The deterministic generator already produces HTML directly. This helper
+    is only used when the user types raw Markdown into the edit form — the
+    backend then needs to render that prose into HTML so the preview pane
+    (which displays ``html_content``) reflects the edit instead of showing
+    a stale cached version.
+
+    We use ``markdown-it-py`` (already a transitive dep via ``rich``)
+    because it's CommonMark-correct and supports tables, which the user is
+    likely to keep when editing template-generated reports.
+    """
+    if not markdown_text or not markdown_text.strip():
+        return wrap_html(title or "Báo cáo", "")
+
+    try:
+        # Lazy import — keeps module-import cost down for hot CRUD paths.
+        from markdown_it import MarkdownIt
+
+        md = (
+            MarkdownIt("commonmark", {"html": False, "breaks": True})
+            .enable("table")
+            .enable("strikethrough")
+        )
+        body_html = md.render(markdown_text)
+    except Exception as e:
+        logger.warning(
+            f"Markdown→HTML render failed; falling back to <pre>: {e}"
+        )
+        from html import escape as _esc
+        body_html = f"<pre>{_esc(markdown_text)}</pre>"
+
+    return wrap_html(title or "Báo cáo", body_html)
 
 
 def _generate_and_attach(
@@ -285,14 +322,22 @@ def update_report(
 
     update_dict = update_data.model_dump(exclude_unset=True)
 
-    # If structural fields change (title / report_type / included_documents)
-    # the cached content is stale — wipe it so the next view triggers a
-    # regeneration through the explicit endpoint, OR rebuild it inline if
-    # the caller did NOT also send a new ``content``. Inline rebuild keeps
-    # the FE single-roundtrip on field edits.
+    # ── Decide what to do with the report body ───────────────────────────
+    # Three signals from the patch:
+    #   - structural_changed  → rebuild from project data via the generator
+    #   - content_supplied    → user hand-typed markdown; we re-render HTML
+    #                           from it so the FE preview reflects the edit
+    #   - html_supplied       → user hand-typed HTML; we trust it as-is and
+    #                           do NOT auto-derive markdown from it
+    #
+    # Without this logic, a save that only touches ``content`` leaves the
+    # cached ``html_content`` untouched and the preview shows the stale
+    # auto-generated HTML — which is what the user reported as "không
+    # thấy thay đổi gì".
     structural_fields = {"title", "report_type", "included_documents"}
     structural_changed = any(k in update_dict for k in structural_fields)
-    user_supplied_content = "content" in update_dict or "html_content" in update_dict
+    content_supplied = "content" in update_dict
+    html_supplied = "html_content" in update_dict
 
     try:
         for key, value in update_dict.items():
@@ -307,9 +352,26 @@ def update_report(
                 value = [str(x) for x in value]
             setattr(report, key, value)
 
-        # Auto-regenerate when structural fields changed and the user did
-        # not manually override the content.
-        if structural_changed and not user_supplied_content:
+        # Regeneration policy:
+        #   1. If the user explicitly sent ``content`` or ``html_content``,
+        #      they want a hand-edited body — never overwrite from data.
+        #      But re-render the *other* representation so both stay in
+        #      sync (FE preview reads ``html_content``).
+        #   2. If only structural fields changed, regenerate from the
+        #      project data so the report reflects the new title / type
+        #      / document subset.
+        #   3. If only metadata (status / archive / publish) changed,
+        #      leave the body alone.
+        if content_supplied and not html_supplied:
+            report.html_content = _render_user_markdown_to_html(
+                report.content or "", report.title
+            )
+            logger.info(
+                f"Report {report.id}: re-rendered HTML from edited "
+                f"markdown ({len(report.content or '')} chars in, "
+                f"{len(report.html_content or '')} chars out)"
+            )
+        elif structural_changed and not (content_supplied or html_supplied):
             project = db.scalar(
                 select(Project).where(Project.id == report.project_id)
             )

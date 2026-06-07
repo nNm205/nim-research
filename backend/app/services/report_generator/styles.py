@@ -202,31 +202,31 @@ REPORT_CSS = """
 .report-tag-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
     margin: 8px 0 16px;
+}
+/* When the chip row sits under the cover title (instead of in a body
+   section), give it a touch more breathing room so it doesn't crowd
+   the meta strip below. */
+.report-cover .report-tag-row.cover-topics {
+    margin: 14px 0 0;
 }
 .report-tag {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 12px 5px 10px;
-    border-radius: 10px;
-    background: #fff;
+    padding: 2px 10px;
+    border-radius: 6px;
+    background: #f5f3ff;
     color: #6d28d9;
-    border: 1px solid #ddd6fe;
-    font-size: 13px;
+    box-shadow: inset 0 0 0 1px #ddd6fe;
+    font-size: 11px;
     font-weight: 500;
-    line-height: 1.3;
-    transition: background-color 0.15s ease;
+    line-height: 1.5;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 .report-tag:hover {
-    background: #f5f3ff;
-}
-.report-tag .tag-icon {
-    width: 12px;
-    height: 12px;
-    flex-shrink: 0;
-    color: #8b5cf6;
+    background: #ede9fe;
+    box-shadow: inset 0 0 0 1px #c4b5fd;
 }
 
 .report-table {
