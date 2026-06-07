@@ -7,11 +7,12 @@
 A full-stack platform that ingests research papers, extracts structured insights section-by-section, runs cross-source literature search, generates polished reports, and chains everything into a single one-click pipeline — so you can go from "what's known about X?" to a fully analysed corpus, an LLM-synthesised report, and a 0–100 quality score in minutes.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.135+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![pgvector](https://img.shields.io/badge/pgvector-enabled-336791?style=flat-square)](https://github.com/pgvector/pgvector)
 [![LangGraph](https://img.shields.io/badge/LangGraph-pipeline-1c3d5a?style=flat-square)](https://langchain-ai.github.io/langgraph/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![Tailwind](https://img.shields.io/badge/Tailwind-4-38B2AC?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 
 </div>
@@ -26,10 +27,10 @@ Researchers spend hours on the boring parts of literature work — searching acr
 
 - **Upload & analyse** — drop a PDF or paste an arXiv URL. The platform parses it with **docling** (layout analysis, reading-order reconstruction, heading detection, table extraction), recovers Unicode math via PyMuPDF bbox extraction, chunks it section-aware, embeds each chunk, then runs a section-by-section LLM analysis that extracts claims, methods, data, tables, formulas, critique, and quotes. Results render as scannable cards with KaTeX math, sortable tables, and an executive summary.
 - **Multi-source search** — query arXiv, Google Scholar, and Semantic Scholar in parallel; results are deduplicated, classified by publisher, filtered to a **trusted academic whitelist** (arXiv · IEEE · ACM · ResearchGate), then re-ranked by semantic relevance. Click "Add to project" on any result and the system auto-locates a downloadable PDF (Unpaywall via DOI, arXiv-derived, or scraped from the landing page) and runs the full ingest pipeline.
-- **Auto-research** — type a topic, pick how many papers to ingest and which LLM to use, walk away. The orchestrator chains *search → ingest top-N → analyse each* into a single background task with a live progress panel showing every stage, and can optionally tail the run with *report → synthesis → QA*.
+- **Auto-research** — type a topic, pick how many papers to ingest and which LLM to use, walk away. The orchestrator chains *search → ingest top-N → analyse each* into a single background task with a live progress panel, and can optionally tail the run with *report → synthesis → QA*.
 - **Generate reports** — pick one of four templates (research summary / literature review / data analysis / custom) and the system deterministically composes Markdown + styled HTML from the project's documents and analyses. Download as `.html`, `.docx`, or `.md` with one click. No LLM cost — the analysis stage already paid for the insight extraction.
 - **Synthesis (LLM)** — opt-in pass that takes a deterministic report and rewrites it as a coherent cross-document narrative: the agent designs an outline, writes per-section prose with inline `[n]` citations, generates an executive summary, and emits APA + BibTeX bibliographies. The original template body is preserved for one-click rollback.
-- **Quality Assurance** — opt-in pass that scores a report 0–100 across **format · citations · facts · grammar**. Format and citation checks are deterministic; fact-check and grammar use one LLM call each. The result is a verdict (excellent · good · needs review · poor), a per-axis score, and a concrete issue list — surfaced in the report sidebar.
+- **Quality assurance** — opt-in pass that scores a report 0–100 across **format · citations · facts · grammar**. Format and citation checks are deterministic; fact-check and grammar use one LLM call each. The result is a verdict (excellent · good · needs review · poor), a per-axis score, and a concrete issue list — surfaced in the report sidebar.
 
 ---
 
@@ -152,8 +153,9 @@ Researchers spend hours on the boring parts of literature work — searching acr
 ### ⚡ Performance
 
 - Async DB session **auto-detects pooler vs direct Postgres**: with Supabase Supavisor or PgBouncer the engine disables prepared-statement caching and uses UUID-named statements (transaction-mode pooler swaps backends between calls); with a direct Postgres connection (local docker-compose, bare-metal) it enables `pool_pre_ping` + the standard asyncpg cache for proper connection-loss recovery
+- `idle_in_transaction_session_timeout` raised to 30 minutes so long PDF parses (docling layout + tables + formulas) don't lose their connection mid-pipeline
 - pgvector for semantic chunk search
-- pg_trgm GIN indexes available for fast fuzzy text search (extension installed; drop-in for future text-search features)
+- pg_trgm extension installed and ready for future fuzzy-text features
 - List endpoints defer heavy `content` / JSONB columns; counts via `GROUP BY` instead of `len(selectin)`
 - Project counts (documents / analyses / reports / research sessions) computed in **one** SQL statement with four `LEFT JOIN`-ed subqueries — replaces the previous four sequential `GROUP BY` round-trips
 - Dashboard fires **two parallel requests** (projects + notifications) and derives every stat client-side — replaces the old N+1 pattern that issued up to 10 sequential calls
@@ -166,13 +168,15 @@ Researchers spend hours on the boring parts of literature work — searching acr
 ### ⚙️ Backend
 - **FastAPI** with async/await throughout, lifespan hook for stale-task recovery
 - **SQLAlchemy 2.0** + **asyncpg** for the async path, **psycopg2** for sync admin paths
-- **PostgreSQL 15** with **pgvector** and **pg_trgm** extensions
-- **Alembic** migrations
+- **PostgreSQL 16** with **pgvector** and **pg_trgm** extensions
+- **Alembic** migrations (auto-applied on container start)
 - **LangChain** + **LangGraph** for agent orchestration (analysis, synthesis, QA)
 - **docling** for primary PDF parsing, **PyMuPDF** + **pdfplumber** for legacy fallback and formula bbox decoding
 - **markdown-it-py** for user-edited markdown → HTML re-rendering
 - **python-docx** for native Word export
-- **httpx** for outbound HTTP (Unpaywall, S2 API)
+- **httpx** for outbound HTTP (Unpaywall, Semantic Scholar API)
+- **sentence-transformers** for cross-encoder re-ranking
+- **CPU-only PyTorch** (`download.pytorch.org/whl/cpu`) — no GPU required
 
 ### 💻 Frontend
 - **React 19** + **Vite** + **Tailwind 4**
@@ -226,7 +230,7 @@ Researchers spend hours on the boring parts of literature work — searching acr
                                                   │
                                                   ▼
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  Service layer: documents · analyses · projects · research · KB · reports · synthesis · qa     │
+│  Service layer: documents · analyses · projects · research · reports · synthesis · qa          │
 │                 · notifications · search (publisher whitelist) · pdf-finder (RG-safe)          │
 └────────────────────────────────────┬─────────────────────────────────────────────────────────────┘
                                      │
@@ -234,12 +238,12 @@ Researchers spend hours on the boring parts of literature work — searching acr
               ▼                                             ▼
 ┌─────────────────────────────────┐         ┌──────────────────────────────────┐
 │  PostgreSQL + pgvector          │         │  External APIs                   │
-│                                 │         │  · arXiv · Google Scholar (SerpAPI)│
-│  · projects · documents         │         │  · Semantic Scholar · Unpaywall  │
-│  · document_chunks (vector)     │         │  · LLM providers · Embedding     │
-│  · analyses · reports           │         │    providers                     │
-│    (synthesis_*  + qa_* fields) │         │                                  │
-│  · kb · notifications           │         │                                  │
+│                                 │         │  · arXiv · Google Scholar        │
+│  · projects · documents         │         │    (SerpAPI)                     │
+│  · document_chunks (vector)     │         │  · Semantic Scholar · Unpaywall  │
+│  · analyses · reports           │         │  · LLM providers · Embedding     │
+│    (synthesis_* + qa_* fields)  │         │    providers                     │
+│  · notifications                │         │                                  │
 └─────────────────────────────────┘         └──────────────────────────────────┘
 ```
 
@@ -296,7 +300,7 @@ Useful when you want hot-reload (`uvicorn --reload` + Vite HMR) or to debug Pyth
 
 - Python 3.11+
 - Node.js 18+
-- PostgreSQL 15 with `pgvector` and `pg_trgm` extensions enabled (or use [Supabase](https://supabase.com/) which has both pre-installed)
+- PostgreSQL 16 with `pgvector` and `pg_trgm` extensions enabled (or use [Supabase](https://supabase.com/) which has both pre-installed)
 - A free Gemini, Groq, or OpenAI API key
 
 **Backend**
@@ -348,8 +352,11 @@ Backend `.env` (only the values the platform actually reads):
 APP_NAME=NIM Research
 DEBUG=False
 
-# Database (Supabase / local Postgres with pgvector + pg_trgm)
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
+# Database
+# When running through ``docker compose`` at the repo root, this URL is
+# overridden by compose to point at the postgres container. When running
+# uvicorn directly on the host, point it at your local Postgres / Supabase.
+DATABASE_URL=postgresql://nim:nim@localhost:5432/nim_research
 
 # Auth
 JWT_SECRET_KEY=replace_with_a_long_random_string
@@ -379,13 +386,24 @@ JINA_API_KEY=...
 SERP_API_KEY=...
 SEMANTIC_API_KEY=...
 
+# Optional: extra CORS origins for prod (comma-separated)
+CORS_ALLOWED_ORIGINS=
+
 REDIS_URL=redis://localhost:6379   # placeholder; not currently used
 ```
 
-Frontend `.env`:
+Frontend `.env` (only used when running `npm run dev` on the host — when built into the Docker image, the bundle uses relative URLs and nginx proxies `/api`):
 
 ```env
-VITE_API_URL=http://localhost:8000
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+Root `.env` (Postgres creds for the Docker stack):
+
+```env
+POSTGRES_USER=nim
+POSTGRES_PASSWORD=change-me-in-prod
+POSTGRES_DB=nim_research
 ```
 
 ---
@@ -427,69 +445,84 @@ Interactive docs at `http://localhost:8000/docs`. Highlights:
 
 ```
 nim-eng/
+├── docker-compose.yml                       # postgres + backend + frontend stack
+├── .env.example                             # Postgres creds for the stack
+├── infra/postgres/init.sql                  # CREATE EXTENSION on first boot
+│
 ├── backend/
-│   ├── app/
-│   │   ├── agents/
-│   │   │   ├── analysis_agent.py            # LangGraph: per-document insight extraction
-│   │   │   ├── research_agent.py            # multi-source search
-│   │   │   ├── synthesis_agent.py           # LangGraph: LLM cross-document writer
-│   │   │   ├── qa_agent.py                  # LangGraph: 0–100 quality score
-│   │   │   └── tools/
-│   │   │       ├── analysis/                # tools used by AnalysisAgent
-│   │   │       ├── research/                # progress tracker (auto-stage builder)
-│   │   │       ├── synthesis/               # context loader, outline builder,
-│   │   │       │                            #   narrative synth, summary gen,
-│   │   │       │                            #   citation manager, report composer
-│   │   │       └── qa/                      # format / citation / fact / grammar /
-│   │   │                                    #   quality scorer
-│   │   ├── routes/                          # FastAPI handlers (incl. synthesis.py)
-│   │   ├── services/
-│   │   │   ├── auto_research_service.py     # search → ingest → analyse [→ report → synth → qa]
-│   │   │   ├── document_ingestion_service.py  # publisher-whitelisted PDF-only ingest
-│   │   │   ├── pdf_finder_service.py        # Unpaywall + arXiv + scrape (RG-safe)
-│   │   │   ├── notification_service.py      # persistent bell-icon alerts
-│   │   │   ├── synthesis_service.py         # dispatch + status helpers
-│   │   │   ├── qa_service.py                # dispatch + status helpers
-│   │   │   ├── report_generator/            # deterministic MD/HTML/DOCX
-│   │   │   ├── stale_recovery.py            # mark zombie running rows failed
-│   │   │   └── ...
-│   │   ├── models/
-│   │   │   ├── llm_providers/               # 5 LLM provider implementations
-│   │   │   ├── embedding_providers/         # 3 embedding implementations
-│   │   │   ├── notification.py
-│   │   │   ├── report.py                    # synthesis_* + qa_* fields
-│   │   │   └── ...
-│   │   ├── tools/document/
-│   │   │   ├── parsers/                     # docling-based pdf_parser.py +
-│   │   │   │                                #   pdf_parser_legacy.py fallback
-│   │   │   ├── chunkers/                    # section-aware (numbered/Roman/letter/named)
-│   │   │   ├── fetchers/                    # PDF + HTML fetchers
-│   │   │   └── vectorstores/                # pgvector
-│   │   ├── tools/search/
-│   │   │   ├── publisher_classifier.py      # arxiv / ieee / acm / researchgate / other
-│   │   │   └── arxiv, scholar, semantic, web
-│   │   ├── prompts/                         # LLM prompt templates (incl. synthesis.py, qa.py)
-│   │   ├── schemas/                         # Pydantic validation (incl. synthesis.py, qa.py)
-│   │   ├── database/                        # async + sync sessions
-│   │   └── main.py
-│   ├── alembic/versions/                    # migrations (incl. add_report_synthesis_qa_fields)
-│   ├── scripts/                             # one-off maintenance scripts
-│   └── requirements.txt
-├── frontend/
-│   └── src/
-│       ├── pages/                           # AnalysisResults, ProjectDetail, Reports, …
-│       ├── components/
-│       │   ├── analysis/                    # SectionInsightCard, progress panels
-│       │   ├── projects/                    # AutoResearchModal (with report/synth/qa toggles)
-│       │   ├── research/                    # IngestSearchResultModal (publisher-aware)
-│       │   ├── reports/                     # ReportCard, CreateReportModal,
-│       │   │                                #   AIEnhancementPanel, QAReportModal,
-│       │   │                                #   PipelineProgressPanel
-│       │   ├── documents/                   # CreateDocumentModal (URL + upload)
-│       │   └── layout/                      # DashboardLayout, NotificationCenter
-│       ├── services/                        # API clients (incl. synthesisService, qaService)
-│       └── hooks/                           # useAnalysisPolling, useReportEnhancement
-└── docs/images/                             # screenshots
+│   ├── Dockerfile                           # Python 3.11-slim + CPU torch + docling
+│   ├── .dockerignore
+│   ├── .env.example
+│   ├── alembic/versions/                    # migrations (synthesis+qa, drop_kb, …)
+│   ├── requirements.txt                     # top-level deps only — no transitive pins
+│   └── app/
+│       ├── main.py                          # FastAPI entry: routers, CORS, /health
+│       ├── config.py                        # pydantic-settings env loader
+│       ├── dependencies.py                  # auth dep, get_db helpers
+│       ├── agents/                          # long-running pipelines (LangGraph)
+│       │   ├── analysis_agent.py            #   per-document insight extraction
+│       │   ├── research_agent.py            #   multi-source search
+│       │   ├── synthesis_agent.py           #   LLM cross-document writer
+│       │   ├── qa_agent.py                  #   0–100 quality scoring
+│       │   └── tools/                       # AGENT-specific tool primitives:
+│       │       ├── analysis/                #   chunk loader, section mapper,
+│       │       │                            #   outline / insight / synthesizer
+│       │       ├── research/                #   progress tracker (auto stages)
+│       │       ├── synthesis/               #   context loader, outline builder,
+│       │       │                            #   narrative / summary / citation /
+│       │       │                            #   report composer
+│       │       └── qa/                      #   format validator, citation verifier,
+│       │                                    #   fact / grammar / quality scorer
+│       ├── routes/                          # FastAPI route handlers
+│       ├── services/                        # request-scoped business logic
+│       │   ├── auto_research_service.py     #   orchestrator: search → ingest → analyse
+│       │   │                                #   [→ report → synth → qa]
+│       │   ├── document_ingestion_service.py  # publisher-whitelisted PDF-only ingest
+│       │   ├── pdf_finder_service.py        #   Unpaywall + arXiv + scrape (RG-safe)
+│       │   ├── synthesis_service.py / qa_service.py  # dispatch + status helpers
+│       │   ├── notification_service.py      #   persistent bell-icon alerts
+│       │   ├── stale_recovery.py            #   mark zombie running rows failed
+│       │   ├── search_service.py            #   parallel + filter + rerank
+│       │   ├── report_service.py            #   CRUD + smart update_report policy
+│       │   └── report_generator/            #   deterministic MD / HTML / DOCX
+│       ├── models/                          # SQLAlchemy ORM
+│       │   ├── llm_providers/               #   5 LLM provider implementations
+│       │   ├── embedding_providers/         #   3 embedding implementations
+│       │   ├── notification.py
+│       │   ├── report.py                    #   synthesis_* + qa_* fields
+│       │   └── …                            #   project / document / analysis / …
+│       ├── tools/                           # SHARED infra (used by services + agents):
+│       │   ├── document/                    #   fetchers / parsers / chunkers /
+│       │   │                                #   embeddings / vectorstores
+│       │   └── search/                      #   academic / web tools, dedup, rerank,
+│       │                                    #   publisher_classifier
+│       ├── prompts/                         # LLM prompt templates
+│       ├── schemas/                         # Pydantic validation
+│       ├── database/                        # async + sync sessions + Base
+│       └── utils/                           # logger, security, constants
+│
+└── frontend/
+    ├── Dockerfile                           # multi-stage: vite build → nginx serve
+    ├── nginx.conf                           # SPA fallback + /api proxy
+    ├── .dockerignore
+    ├── .env.example
+    └── src/
+        ├── App.jsx                          # router
+        ├── pages/                           # Dashboard, Projects, ProjectDetail,
+        │                                    # Documents, Analysis, Reports, …
+        ├── components/
+        │   ├── analysis/                    # SectionInsightCard, progress panels
+        │   ├── projects/                    # AutoResearchModal (with toggles)
+        │   ├── research/                    # IngestSearchResultModal (publisher-aware)
+        │   ├── reports/                     # ReportCard, CreateReportModal,
+        │   │                                # AIEnhancementPanel, QAReportModal,
+        │   │                                # PipelineProgressPanel
+        │   ├── documents/                   # CreateDocumentModal (URL + upload)
+        │   └── layout/                      # DashboardLayout, NotificationCenter
+        ├── services/                        # API clients
+        │                                    # (incl. synthesisService, qaService)
+        ├── hooks/                           # useAnalysisPolling, useReportEnhancement
+        └── routes/                          # PrivateRoute auth guard
 ```
 
 ---
