@@ -20,12 +20,20 @@ from app.tools.search.publisher_classifier import (
 from app.utils.logger import logger
 
 class IngestSkipped(Exception):
+    """Base class — caller should treat this result as 'skipped, not failed'."""
+
 
 class NonAcademicSourceError(IngestSkipped):
+    """Search result's publisher is not in the trusted whitelist
+    (arXiv / IEEE / ACM / ResearchGate)."""
+
 
 class NoAcademicPdfError(IngestSkipped):
+    """Publisher is trusted but no PDF could be located for this paper."""
+
 
 class PdfIngestError(IngestSkipped):
+    """PDF download / parse failed mid-pipeline."""
 
 def _build_embedder(
     provider_override: str | None = None,
