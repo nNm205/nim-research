@@ -333,7 +333,12 @@ async def ingest_search_result_as_document(
     from sqlalchemy import select
     from app.models.research import SearchResult, ResearchSession
     from app.services.project_service import verify_project_ownership_async
-    from app.services.document_ingestion_service import DocumentIngestionService
+    from app.services.document_ingestion_service import (
+        DocumentIngestionService,
+        NoAcademicPdfError,
+        NonAcademicSourceError,
+        PdfIngestError,
+    )
     from app.utils.logger import logger
 
     logger.info(
@@ -379,6 +384,25 @@ async def ingest_search_result_as_document(
         document = await service.ingest_from_search_result(
             project_id=project_id,
             search_result=result_row,
+        )
+    except NonAcademicSourceError as e:
+        # User explicitly opted into restricting ingest to academic
+        # sources — surface this distinctly so the FE can show a
+        # specific "không phải nguồn học thuật" message instead of a
+        # generic 422.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except NoAcademicPdfError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except PdfIngestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
         )
     except ValueError as e:
         raise HTTPException(

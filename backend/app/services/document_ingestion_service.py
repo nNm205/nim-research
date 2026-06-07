@@ -12,7 +12,44 @@ from app.tools.document.parsers.html_parser import HTMLParser
 from app.tools.document.chunkers.section_aware_chunker import SectionAwareChunker
 from app.tools.document.embeddings.provider_embedding import ProviderEmbeddingGenerator
 from app.tools.document.vectorstores.factory import VectorStoreFactory
+from app.tools.search.publisher_classifier import (
+    Publisher,
+    classify_publisher,
+    is_trusted,
+)
 from app.utils.logger import logger
+
+
+# ── Skip exceptions ──────────────────────────────────────────────────────────
+#
+# Raised by ``ingest_from_search_result`` to signal "skip this result"
+# in a structured way. The auto-research orchestrator catches these and
+# logs a clean reason on the progress feed without poisoning its own
+# session — they're expected outcomes, not bugs.
+
+class IngestSkipped(Exception):
+    """Base class — caller should treat this result as "skipped, not failed"."""
+
+
+class NonAcademicSourceError(IngestSkipped):
+    """Search result's publisher is not in the trusted whitelist
+    (arXiv / IEEE / ACM / ResearchGate)."""
+
+
+class NoAcademicPdfError(IngestSkipped):
+    """Publisher is trusted but no PDF could be located for this paper.
+
+    Common reasons:
+      - IEEE / ACM article is paywalled and Unpaywall has no OA copy
+      - ResearchGate-hosted PDF was rejected per ToS and no other
+        OA copy exists
+      - Search result lacks both ``pdf_url`` and ``doi``
+    """
+
+
+class PdfIngestError(IngestSkipped):
+    """PDF download / parse failed mid-pipeline."""
+
 
 def _build_embedder(
     provider_override: str | None = None,
@@ -129,66 +166,104 @@ class DocumentIngestionService:
     ) -> Document:
         """Best-effort ingest of a SearchResult row.
 
-        Strategy:
-          1. Locate a downloadable PDF (existing ``pdf_url``, derived arXiv
-             link, Unpaywall via DOI, or scraped from the landing page).
-          2. If we found one: ingest it via ``ingest_pdf``.
-          3. Otherwise fall back to ``ingest_html`` on the landing URL — at
-             least the user gets the page text + metadata in their project.
+        Policy: ONLY trusted publishers (arXiv / IEEE / ACM / ResearchGate)
+        AND ONLY when a downloadable PDF can be located.
 
-        Always returns a ``Document``. The caller can inspect
-        ``document.source_type`` to know which path was taken (``pdf`` /
-        ``web`` / ``academic`` / ``uploaded``).
+        We classify by publisher (DOI prefix + URL host) rather than by
+        search source because Google Scholar / Semantic Scholar surface
+        papers from many publishers — only the ones that came from the
+        4 trusted ones should be ingested.
+
+        Strategy:
+          1. Classify the search hit's publisher. If it's not trusted,
+             raise ``NonAcademicSourceError`` — the user explicitly does
+             not want non-academic sources in their corpus.
+          2. Locate a downloadable PDF (existing ``pdf_url``, derived
+             arXiv link, Unpaywall via DOI, or scraped from the landing
+             page). ResearchGate-hosted PDFs are NEVER fetched; the
+             finder resolves through Unpaywall instead per RG's ToS.
+          3. If found: ingest it via ``ingest_pdf``.
+          4. If no PDF is reachable: raise ``NoAcademicPdfError`` so the
+             caller can skip this result instead of silently falling back
+             to a (potentially low-quality) HTML page.
+
+        On success, returns a ``Document`` with ``source_type='pdf'``
+        and the publisher recorded in ``document_metadata.publisher``.
         """
         from app.services.pdf_finder_service import PDFFinderService
 
+        # ── 1. Publisher whitelist ──────────────────────────────────────
+        source_value = getattr(search_result, "source", None)
+        source_str = getattr(source_value, "value", source_value)
+        publisher = classify_publisher(
+            doi=getattr(search_result, "doi", None),
+            url=getattr(search_result, "url", None),
+            pdf_url=getattr(search_result, "pdf_url", None),
+            source=source_str,
+        )
+        if not is_trusted(publisher):
+            raise NonAcademicSourceError(
+                f"Publisher '{publisher.value}' không nằm trong danh sách "
+                f"học thuật đáng tin cậy (arXiv, IEEE, ACM, ResearchGate)."
+            )
+
+        # ── 2. Locate PDF ───────────────────────────────────────────────
         finder = PDFFinderService()
         pdf_url = await finder.find(
             url=getattr(search_result, "url", None),
             pdf_url=getattr(search_result, "pdf_url", None),
             doi=getattr(search_result, "doi", None),
-            source=getattr(search_result, "source", None),
+            source=source_value,
             source_id=getattr(search_result, "source_id", None),
         )
 
-        if pdf_url:
-            logger.info(
-                f"DocumentIngestion: search result {getattr(search_result, 'id', '?')} "
-                f"→ PDF at {pdf_url}"
-            )
-            try:
-                doc = await self.ingest_pdf(project_id=project_id, pdf_url=pdf_url)
-                # Override the title if the search result has a cleaner one
-                # than what the PDF parser auto-detected.
-                title = getattr(search_result, "title", None)
-                if title and (not doc.title or doc.title.strip().lower() == "untitled"):
-                    doc.title = title
-                    await self.db.commit()
-                    await self.db.refresh(doc)
-                return doc
-            except Exception as e:
-                logger.warning(
-                    f"DocumentIngestion: PDF ingest failed for {pdf_url} "
-                    f"({e}); falling back to HTML"
+        if not pdf_url:
+            extra = ""
+            if publisher == Publisher.RESEARCHGATE:
+                extra = (
+                    " ResearchGate-hosted PDFs không được tải tự động "
+                    "(theo ToS của RG); cần một bản OA từ publisher gốc."
                 )
+            raise NoAcademicPdfError(
+                "Không tìm thấy PDF Open Access cho kết quả này — bỏ qua."
+                + extra
+            )
 
-        # Fallback: ingest the landing page as HTML.
-        landing_url = getattr(search_result, "url", None)
-        if not landing_url:
-            raise ValueError("Search result has no URL to ingest from")
-
-        source = getattr(search_result, "source", None) or "web"
-        # Map our internal SearchSource enum strings to source_type values
-        # the rest of the app understands.
-        source_type = "academic" if source in {
-            "arxiv", "google_scholar", "semantic_scholar"
-        } else "web"
-
-        return await self.ingest_html(
-            project_id=project_id,
-            url=landing_url,
-            source_type=source_type,
+        # ── 3. Ingest the PDF ───────────────────────────────────────────
+        logger.info(
+            f"DocumentIngestion: search result "
+            f"{getattr(search_result, 'id', '?')} "
+            f"(publisher={publisher.value}) → PDF at {pdf_url}"
         )
+        try:
+            doc = await self.ingest_pdf(
+                project_id=project_id, pdf_url=pdf_url
+            )
+        except Exception as e:
+            # PDF download or parse failed — DO NOT fall back to HTML.
+            # Surface the error so the caller can record it as a skip.
+            raise PdfIngestError(
+                f"Tải hoặc phân tích PDF thất bại: {e}"
+            ) from e
+
+        # Override the title if the search result has a cleaner one than
+        # what the PDF parser auto-detected.
+        title = getattr(search_result, "title", None)
+        if title and (
+            not doc.title or doc.title.strip().lower() == "untitled"
+        ):
+            doc.title = title
+
+        # Stamp the publisher onto the document metadata so the FE can
+        # render a "IEEE" / "ACM" / "arXiv" / "ResearchGate" chip on
+        # the document card.
+        meta = dict(doc.document_metadata or {})
+        meta["publisher"] = publisher.value
+        doc.document_metadata = meta
+
+        await self.db.commit()
+        await self.db.refresh(doc)
+        return doc
 
     async def ingest_pdf(
         self,
