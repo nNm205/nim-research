@@ -35,19 +35,35 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: F401  used for type hints
 
 from app.agents.analysis_agent import AnalysisAgent
+from app.agents.qa_agent import QualityAssuranceAgent
 from app.agents.research_agent import ResearchAgent
+from app.agents.synthesis_agent import SynthesisAgent
 from app.agents.tools.research.progress_tracker import (
     ResearchProgressTracker,
     STAGE_ANALYSE,
     STAGE_INGEST,
+    STAGE_QA,
+    STAGE_REPORT,
     STAGE_SAVE,
+    STAGE_SYNTHESIZE,
+    build_auto_stages,
 )
 from app.database.session import AsyncSessionLocal
 from app.models.analysis import DocumentAnalysis
 from app.models.document import Document  # noqa: F401  imported for ORM resolution
+from app.models.project import Project
+from app.models.report import Report
 from app.models.research import ResearchSession, SearchResult
-from app.services.document_ingestion_service import DocumentIngestionService
-from app.utils.constants import AnalysisStatus, ResearchStatus
+from app.schemas.report import ReportCreate
+from app.services.document_ingestion_service import (
+    DocumentIngestionService,
+    IngestSkipped,
+    NoAcademicPdfError,
+    NonAcademicSourceError,
+    PdfIngestError,
+)
+from app.services.report_service import create_report
+from app.utils.constants import AnalysisStatus, ReportType, ResearchStatus
 from app.utils.logger import logger
 
 
@@ -84,6 +100,11 @@ class AutoResearchService:
         embedding_model: str | None,
         llm_provider: str | None,
         llm_model: str | None,
+        *,
+        auto_report: bool = False,
+        auto_synthesize: bool = False,
+        auto_qa: bool = False,
+        report_type: str | None = None,
     ) -> None:
         """Schedule the orchestration as an asyncio background task.
 
@@ -98,12 +119,17 @@ class AutoResearchService:
                     embedding_model=embedding_model,
                     llm_provider=llm_provider,
                     llm_model=llm_model,
+                    auto_report=auto_report,
+                    auto_synthesize=auto_synthesize,
+                    auto_qa=auto_qa,
+                    report_type=report_type,
                 )
             )
         )
         logger.info(
             f"AutoResearch: dispatched session={research_session_id} "
-            f"max_documents={max_documents} llm={llm_provider}/{llm_model}"
+            f"max_documents={max_documents} llm={llm_provider}/{llm_model} "
+            f"report={auto_report} synthesize={auto_synthesize} qa={auto_qa}"
         )
 
     async def _run_in_background(
@@ -115,8 +141,19 @@ class AutoResearchService:
         embedding_model: str | None,
         llm_provider: str | None,
         llm_model: str | None,
+        auto_report: bool = False,
+        auto_synthesize: bool = False,
+        auto_qa: bool = False,
+        report_type: str | None = None,
     ) -> None:
         max_documents = max(1, min(max_documents, _MAX_DOCS_TO_INGEST))
+
+        # Synthesis and QA implicitly require a Report — silently drop
+        # them if the user disabled report creation. Avoids running
+        # downstream agents against a non-existent target.
+        if not auto_report:
+            auto_synthesize = False
+            auto_qa = False
 
         # The tracker writes to ``research_sessions.progress`` — needs a
         # dedicated session because it persists state across stages while
@@ -136,6 +173,10 @@ class AutoResearchService:
                     embedding_model=embedding_model,
                     llm_provider=llm_provider,
                     llm_model=llm_model,
+                    auto_report=auto_report,
+                    auto_synthesize=auto_synthesize,
+                    auto_qa=auto_qa,
+                    report_type=report_type,
                 )
             except BaseException as e:
                 # Catch BaseException (not just Exception) so even a
@@ -184,12 +225,23 @@ class AutoResearchService:
         embedding_model: str | None,
         llm_provider: str | None,
         llm_model: str | None,
+        auto_report: bool = False,
+        auto_synthesize: bool = False,
+        auto_qa: bool = False,
+        report_type: str | None = None,
     ) -> None:
         """The pipeline body itself — extracted so the caller can wrap it
         in a top-level safety net that always lands the session in a
         terminal state."""
+        # Build the stage list dynamically so the FE stepper renders the
+        # exact sequence we're about to run.
+        stages = build_auto_stages(
+            with_report=auto_report,
+            with_synthesis=auto_synthesize,
+            with_qa=auto_qa,
+        )
         tracker = ResearchProgressTracker(
-            tracker_db, research_session_id, mode="auto"
+            tracker_db, research_session_id, mode="auto", stages=stages,
         )
         # Pull the query for the init message.
         session_row = await tracker_db.scalar(
@@ -292,16 +344,92 @@ class AutoResearchService:
             )
             return
 
-        # ── Stage 4: done ─────────────────────────────────────────────
+        # ── Stage 4 (optional): create Report ─────────────────────────
+        report_id: UUID | None = None
+        if auto_report and project_id is not None:
+            try:
+                await tracker.start_stage(
+                    STAGE_REPORT,
+                    detail="Tạo báo cáo từ Documents + Analysis",
+                )
+                report_id = await self._stage_report(
+                    project_id=project_id,
+                    research_query=session_row.query if session_row else None,
+                    report_type=report_type,
+                    document_ids=document_ids,
+                )
+                await tracker.finish_stage(
+                    STAGE_REPORT,
+                    message=f"Báo cáo được tạo (id={str(report_id)[:8]}...)",
+                )
+            except Exception as e:
+                # Don't abort the whole pipeline — log and skip the
+                # remaining add-ons. The user still has Documents +
+                # Analyses; they can create a report manually later.
+                logger.error(
+                    f"AutoResearch: report stage failed for "
+                    f"{research_session_id}: {e}"
+                )
+                await tracker.fail_stage(STAGE_REPORT, str(e))
+                report_id = None
+
+        # ── Stage 5 (optional): synthesise the report with LLM ────────
+        if auto_synthesize and report_id is not None:
+            try:
+                await tracker.start_stage(
+                    STAGE_SYNTHESIZE,
+                    detail="LLM viết lại narrative xuyên tài liệu",
+                )
+                await self._stage_synthesize(
+                    report_id=report_id,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                )
+                await tracker.finish_stage(STAGE_SYNTHESIZE)
+            except Exception as e:
+                logger.error(
+                    f"AutoResearch: synthesis stage failed for "
+                    f"{research_session_id}: {e}"
+                )
+                await tracker.fail_stage(STAGE_SYNTHESIZE, str(e))
+                # Synthesis failed but the template Report still exists
+                # — let the pipeline continue to QA on the template body.
+
+        # ── Stage 6 (optional): QA the report ─────────────────────────
+        if auto_qa and report_id is not None:
+            try:
+                await tracker.start_stage(
+                    STAGE_QA,
+                    detail="Kiểm format / citation / fact / grammar",
+                )
+                qa_score = await self._stage_qa(
+                    report_id=report_id,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                )
+                msg = (
+                    f"QA điểm {qa_score}/100"
+                    if qa_score is not None
+                    else "QA hoàn tất"
+                )
+                await tracker.finish_stage(STAGE_QA, message=msg)
+            except Exception as e:
+                logger.error(
+                    f"AutoResearch: qa stage failed for "
+                    f"{research_session_id}: {e}"
+                )
+                await tracker.fail_stage(STAGE_QA, str(e))
+
+        # ── Stage 7: done ─────────────────────────────────────────────
         await tracker.start_stage(
             STAGE_SAVE,
             detail="Hoàn tất pipeline",
         )
         await tracker.finish_stage(STAGE_SAVE)
-        await tracker.finalize(
-            "completed",
-            f"{len(document_ids)} tài liệu được phân tích",
-        )
+        completion_msg = f"{len(document_ids)} tài liệu được phân tích"
+        if report_id is not None:
+            completion_msg += " + báo cáo đã sinh"
+        await tracker.finalize("completed", completion_msg)
         await self._mark_session_terminal(
             research_session_id, "completed"
         )
@@ -463,13 +591,25 @@ class AutoResearchService:
         embedding_model: str | None,
         tracker: ResearchProgressTracker,
     ) -> list[UUID]:
+        """Ingest the top-ranked academic search results.
+
+        Pulls more results than ``max_documents`` from the DB so we can
+        skip non-academic ones and missing-PDF ones without dropping
+        below the user's requested document count. Stops as soon as we
+        have ``max_documents`` successful ingests OR exhaust the search
+        results.
+        """
+        # Over-fetch: assume up to 50% of search results may be skipped
+        # (non-academic source or no PDF). Capped at 3× to avoid wasting
+        # work on a query that's mostly low-quality.
+        candidate_limit = min(max_documents * 3, _MAX_DOCS_TO_INGEST * 3)
         async with AsyncSessionLocal() as db:
             stmt = (
                 select(SearchResult)
                 .where(SearchResult.research_session_id == research_session_id)
                 .where(SearchResult.document_id.is_(None))
                 .order_by(SearchResult.rank.asc().nulls_last())
-                .limit(max_documents)
+                .limit(candidate_limit)
             )
             results = list((await db.execute(stmt)).scalars().all())
 
@@ -481,20 +621,24 @@ class AutoResearchService:
             return []
 
         logger.info(
-            f"AutoResearch: ingesting top {len(results)} results "
-            f"for session {research_session_id}"
+            f"AutoResearch: scanning up to {len(results)} candidates for "
+            f"top {max_documents} academic-PDF ingests "
+            f"(session {research_session_id})"
         )
 
-        # Run ingests sequentially so we can publish accurate per-item
-        # progress to the tracker. PDF download + parse is dominated by
-        # network I/O so the 2× speedup from concurrency=2 isn't worth
-        # the loss of clean per-item progress reporting.
         document_ids: list[UUID] = []
-        total = len(results)
-        for idx, result in enumerate(results):
+        skipped_count = 0
+        seen_ids = 0
+
+        for result in results:
+            if len(document_ids) >= max_documents:
+                break
+            seen_ids += 1
+            # Show "x/N" against the goal, not the candidate pool, so
+            # the user sees progress toward the target they configured.
             await tracker.update_item_progress(
-                done=idx,
-                total=total,
+                done=len(document_ids),
+                total=max_documents,
                 current_title=result.title,
             )
             async with AsyncSessionLocal() as db:
@@ -517,27 +661,58 @@ class AutoResearchService:
                     await db.commit()
                     document_ids.append(document.id)
                     await tracker.log(
-                        f"✓ Đã nạp: {result.title[:80]}",
+                        f"✓ Đã nạp PDF: {result.title[:80]}",
                         level="done",
                     )
-                except Exception as e:
-                    logger.warning(
-                        f"AutoResearch: ingest failed for "
-                        f"search_result={result.id} ({e})"
-                    )
+                except NonAcademicSourceError:
+                    # Common — silent skip with low-noise log.
+                    skipped_count += 1
                     await db.rollback()
                     await tracker.log(
-                        f"⚠ Bỏ qua (lỗi ingest): {result.title[:80]}",
+                        f"⏭ Bỏ qua (nguồn không học thuật): "
+                        f"{result.title[:80]}",
+                        level="info",
+                    )
+                except NoAcademicPdfError:
+                    skipped_count += 1
+                    await db.rollback()
+                    await tracker.log(
+                        f"⏭ Bỏ qua (không có PDF): {result.title[:80]}",
+                        level="info",
+                    )
+                except (PdfIngestError, IngestSkipped) as e:
+                    skipped_count += 1
+                    await db.rollback()
+                    await tracker.log(
+                        f"⚠ Bỏ qua (lỗi PDF): {result.title[:80]} ({e})",
+                        level="error",
+                    )
+                except Exception as e:
+                    # Unknown failure — log loudly but keep going.
+                    logger.warning(
+                        f"AutoResearch: unexpected ingest failure for "
+                        f"search_result={result.id}: {e}"
+                    )
+                    skipped_count += 1
+                    await db.rollback()
+                    await tracker.log(
+                        f"⚠ Lỗi không xác định: {result.title[:80]}",
                         level="error",
                     )
 
-        # Final progress update — show "done/total" instead of leaving
-        # the counter on the last in-flight item.
+        # Final progress update — show "done/goal" cleanly.
         await tracker.update_item_progress(
-            done=total,
-            total=total,
+            done=len(document_ids),
+            total=max_documents,
             current_title=None,
         )
+        if skipped_count:
+            await tracker.log(
+                f"Tổng kết: {len(document_ids)}/{max_documents} tài liệu "
+                f"thành công, bỏ qua {skipped_count} kết quả "
+                f"(không phải nguồn học thuật hoặc không có PDF)",
+                level="info",
+            )
         return document_ids
 
     # ── Stage 3: analyse each ingested document ─────────────────────────────
@@ -638,6 +813,109 @@ class AutoResearchService:
             done=total, total=total, current_title=None
         )
 
+    # ── Stage 4 (optional): create Report ───────────────────────────────────
+
+    async def _stage_report(
+        self,
+        *,
+        project_id: UUID,
+        research_query: str | None,
+        report_type: str | None,
+        document_ids: list[UUID],
+    ) -> UUID:
+        """Create a deterministic Report attached to the project.
+
+        Title is derived from the search query so the user sees the same
+        topic on the report list as in the research history. The report
+        includes only the documents we actually ingested in this auto-
+        research run — not every document the project ever held.
+        """
+        # Validate / fall back the report type.
+        rtype = report_type
+        if rtype not in {t.value for t in ReportType}:
+            rtype = ReportType.RESEARCH_SUMMARY.value
+
+        title = _derive_report_title(research_query)
+        # ``create_report`` is sync (operates on a sync ``Session``).
+        # We wrap it in ``asyncio.to_thread`` so the orchestrator stays
+        # async-friendly and doesn't block the event loop while the
+        # generator runs.
+        from app.database.session import SessionLocal
+
+        def _create_sync() -> UUID:
+            with SessionLocal() as db:
+                report = create_report(
+                    db=db,
+                    project_id=project_id,
+                    report_data=ReportCreate(
+                        title=title,
+                        report_type=ReportType(rtype),
+                        included_documents=list(document_ids) or None,
+                    ),
+                )
+                # Detach: pull the id before the session closes.
+                return report.id
+
+        return await asyncio.to_thread(_create_sync)
+
+    # ── Stage 5 (optional): SynthesisAgent ──────────────────────────────────
+
+    async def _stage_synthesize(
+        self,
+        *,
+        report_id: UUID,
+        llm_provider: str | None,
+        llm_model: str | None,
+    ) -> None:
+        """Run SynthesisAgent INLINE (not via dispatch) so this stage
+        blocks the auto-research pipeline until synthesis completes.
+
+        The agent persists progress into ``reports.synthesis_progress``
+        so a separate "report detail" tab can still show its own steps —
+        but the auto-research stepper only flips when this method
+        returns.
+        """
+        async with AsyncSessionLocal() as db:
+            agent = SynthesisAgent(
+                db,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+            )
+            await agent.run(report_id)
+
+    # ── Stage 6 (optional): QualityAssuranceAgent ───────────────────────────
+
+    async def _stage_qa(
+        self,
+        *,
+        report_id: UUID,
+        llm_provider: str | None,
+        llm_model: str | None,
+    ) -> int | None:
+        """Run QualityAssuranceAgent INLINE and return the overall score
+        so the auto-research progress can advertise it on completion."""
+        async with AsyncSessionLocal() as db:
+            agent = QualityAssuranceAgent(
+                db,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+            )
+            await agent.run(report_id)
+
+        # Read back the score for the stage finish message.
+        try:
+            async with AsyncSessionLocal() as db:
+                report = await db.scalar(
+                    select(Report).where(Report.id == report_id)
+                )
+                if report and isinstance(report.qa_report, dict):
+                    score = report.qa_report.get("overall_score")
+                    if isinstance(score, (int, float)):
+                        return int(score)
+        except Exception:
+            pass
+        return None
+
 
 # ── Module-level convenience ──────────────────────────────────────────────
 
@@ -652,6 +930,10 @@ def dispatch_auto_research(
     embedding_model: str | None = None,
     llm_provider: str | None = None,
     llm_model: str | None = None,
+    auto_report: bool = False,
+    auto_synthesize: bool = False,
+    auto_qa: bool = False,
+    report_type: str | None = None,
 ) -> None:
     """Fire-and-forget convenience wrapper used by the route handler.
 
@@ -671,6 +953,30 @@ def dispatch_auto_research(
                 embedding_model=embedding_model,
                 llm_provider=llm_provider,
                 llm_model=llm_model,
+                auto_report=auto_report,
+                auto_synthesize=auto_synthesize,
+                auto_qa=auto_qa,
+                report_type=report_type,
             )
         )
     )
+
+
+def _derive_report_title(query: str | None) -> str:
+    """Build a Report.title from the research query.
+
+    Truncated + capitalised so the report list reads cleanly. Falls
+    back to a generic title when the query is empty (defensive — the
+    pipeline should never have got this far without a query).
+    """
+    base = (query or "").strip()
+    if not base:
+        return "Báo cáo nghiên cứu tự động"
+    # Drop common imperative prefixes the user types when querying.
+    for prefix in ("tìm hiểu về ", "nghiên cứu về ", "tổng quan về "):
+        if base.lower().startswith(prefix):
+            base = base[len(prefix):]
+            break
+    if len(base) > 120:
+        base = base[:117].rstrip() + "..."
+    return f"Báo cáo: {base[0].upper()}{base[1:]}" if base else "Báo cáo"

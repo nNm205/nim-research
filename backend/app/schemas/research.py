@@ -16,6 +16,15 @@ class AutoResearchCreate(BaseModel):
     bounds how many top-ranked results we ingest and analyse. The LLM
     and embedding overrides flow through to the respective downstream
     services.
+
+    Three optional add-on stages run *after* analyse:
+      - ``auto_report``      → create a project Report (deterministic)
+      - ``auto_synthesize``  → run SynthesisAgent on that Report (LLM)
+      - ``auto_qa``          → run QualityAssuranceAgent on that Report (LLM)
+
+    Synthesis and QA implicitly require a Report — the orchestrator
+    silently drops them when ``auto_report=False`` to avoid wasting
+    LLM calls on a no-op.
     """
 
     query: str = Field(..., min_length=3, max_length=1000)
@@ -26,6 +35,13 @@ class AutoResearchCreate(BaseModel):
     embedding_model: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+
+    # Add-on stages — all default off so existing callers keep the
+    # original "search + ingest + analyse" behaviour.
+    auto_report: bool = False
+    auto_synthesize: bool = False
+    auto_qa: bool = False
+    report_type: Optional[str] = None  # one of ReportType values; None → default research_summary
 
 class SearchResultBase(BaseModel):
     title: str

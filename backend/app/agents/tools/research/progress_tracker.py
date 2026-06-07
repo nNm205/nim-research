@@ -32,6 +32,9 @@ from app.utils.logger import logger
 STAGE_SEARCH = "search"
 STAGE_INGEST = "ingest"
 STAGE_ANALYSE = "analyse"
+STAGE_REPORT = "report"
+STAGE_SYNTHESIZE = "synthesize"
+STAGE_QA = "qa"
 STAGE_SAVE = "save"
 
 
@@ -40,12 +43,53 @@ CANONICAL_STAGES_SIMPLE: list[dict[str, str]] = [
     {"key": STAGE_SAVE,   "label": "Lưu kết quả"},
 ]
 
+# The "auto" stage list is now BUILT dynamically because the user can
+# toggle the report / synthesis / qa add-on stages independently in the
+# auto-research modal. ``build_auto_stages`` returns the right shape
+# given the toggles. ``CANONICAL_STAGES_AUTO`` is kept as the default
+# (no add-ons) for backward compatibility with callers that don't pass
+# explicit toggles.
 CANONICAL_STAGES_AUTO: list[dict[str, str]] = [
     {"key": STAGE_SEARCH,  "label": "Tìm kiếm tài liệu"},
     {"key": STAGE_INGEST,  "label": "Nạp tài liệu vào dự án"},
     {"key": STAGE_ANALYSE, "label": "Phân tích từng tài liệu"},
     {"key": STAGE_SAVE,    "label": "Hoàn tất"},
 ]
+
+
+def build_auto_stages(
+    *,
+    with_report: bool = False,
+    with_synthesis: bool = False,
+    with_qa: bool = False,
+) -> list[dict[str, str]]:
+    """Return the auto-research stage list with the requested add-ons.
+
+    Stages always appear in the same order:
+        search → ingest → analyse → [report] → [synthesize] → [qa] → save
+
+    Synthesis and QA only make sense when there's a Report to operate on,
+    so when ``with_report=False`` the ``with_synthesis`` and ``with_qa``
+    toggles are silently dropped from the stage list. The orchestrator
+    enforces the same invariant before dispatching the agents.
+    """
+    stages: list[dict[str, str]] = [
+        {"key": STAGE_SEARCH,  "label": "Tìm kiếm tài liệu"},
+        {"key": STAGE_INGEST,  "label": "Nạp tài liệu vào dự án"},
+        {"key": STAGE_ANALYSE, "label": "Phân tích từng tài liệu"},
+    ]
+    if with_report:
+        stages.append({"key": STAGE_REPORT, "label": "Tạo báo cáo dự án"})
+        if with_synthesis:
+            stages.append(
+                {"key": STAGE_SYNTHESIZE, "label": "Tổng hợp báo cáo bằng AI"}
+            )
+        if with_qa:
+            stages.append(
+                {"key": STAGE_QA, "label": "Kiểm chất lượng báo cáo"}
+            )
+    stages.append({"key": STAGE_SAVE, "label": "Hoàn tất"})
+    return stages
 
 _MAX_EVENTS = 40
 
@@ -70,18 +114,25 @@ class ResearchProgressTracker:
         research_session_id: UUID,
         *,
         mode: str = "simple",  # "simple" | "auto"
+        stages: list[dict[str, str]] | None = None,
     ) -> None:
         self.db = db
         self.research_session_id = research_session_id
         self.mode = mode
         self._stage_started_at: dict[str, float] = {}
 
-        stages = (
-            CANONICAL_STAGES_AUTO if mode == "auto" else CANONICAL_STAGES_SIMPLE
-        )
+        # Caller can override the canonical stage list — used by
+        # AutoResearchService to add optional report / synthesise / qa
+        # stages without baking the full cross-product into the tracker.
+        if stages is not None:
+            stage_list = list(stages)
+        elif mode == "auto":
+            stage_list = list(CANONICAL_STAGES_AUTO)
+        else:
+            stage_list = list(CANONICAL_STAGES_SIMPLE)
         self._state: dict[str, Any] = {
             "mode": mode,
-            "stages": list(stages),
+            "stages": stage_list,
             "current_stage": None,
             "current_stage_label": None,
             "current_detail": None,

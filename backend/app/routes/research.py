@@ -97,6 +97,10 @@ async def start_auto_research(
         embedding_model=payload.embedding_model,
         llm_provider=payload.llm_provider,
         llm_model=payload.llm_model,
+        auto_report=payload.auto_report,
+        auto_synthesize=payload.auto_synthesize,
+        auto_qa=payload.auto_qa,
+        report_type=payload.report_type,
     )
 
     return research_session

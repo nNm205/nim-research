@@ -10,6 +10,8 @@ import {
   Search,
   Download,
   Brain,
+  ClipboardList,
+  ShieldCheck,
 } from "lucide-react";
 import { researchService } from "../../services/researchService";
 import { documentService } from "../../services/documentService";
@@ -36,6 +38,14 @@ const AutoResearchModal = ({ projectId, onClose, onLaunched }) => {
   const [query, setQuery] = useState("");
   const [maxResults, setMaxResults] = useState(10);
   const [maxDocuments, setMaxDocuments] = useState(3);
+
+  // Add-on stages — opt-in. Synthesis + QA gated behind auto_report
+  // (the orchestrator drops them when auto_report is false anyway, but
+  // we mirror that here so the UI stays honest).
+  const [autoReport, setAutoReport] = useState(false);
+  const [autoSynthesize, setAutoSynthesize] = useState(false);
+  const [autoQA, setAutoQA] = useState(false);
+  const [reportType, setReportType] = useState("research_summary");
 
   // LLM provider/model
   const [llmProviders, setLlmProviders] = useState([]);
@@ -130,6 +140,13 @@ const AutoResearchModal = ({ projectId, onClose, onLaunched }) => {
         llm_model: llmModel,
         embedding_provider: selectedEmbeddingProvider,
         embedding_model: selectedEmbeddingModel,
+        auto_report: autoReport,
+        // Synthesis and QA require a report to operate on — gate them
+        // behind auto_report on the FE too so the user can't toggle a
+        // no-op option.
+        auto_synthesize: autoReport && autoSynthesize,
+        auto_qa: autoReport && autoQA,
+        report_type: autoReport ? reportType : null,
       });
       onLaunched?.(session);
       onClose();
@@ -382,62 +399,150 @@ const AutoResearchModal = ({ projectId, onClose, onLaunched }) => {
             </div>
           )}
 
+          {/* ── Add-on stages: report / synthesis / QA ─────────── */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
+              <p className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                <ClipboardList className="w-4 h-4 text-teal-600" />
+                Tự động sinh báo cáo sau khi phân tích
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Bật để pipeline tự tạo Report, đồng thời có thể chạy
+                Synthesis (LLM viết lại narrative) và QA (kiểm chất lượng)
+              </p>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <ToggleRow
+                checked={autoReport}
+                onChange={(v) => {
+                  setAutoReport(v);
+                  if (!v) {
+                    setAutoSynthesize(false);
+                    setAutoQA(false);
+                  }
+                }}
+                label="Tạo báo cáo dự án"
+                description="Tự động sinh Report tổng hợp từ Documents + Analysis"
+                icon={ClipboardList}
+                accent="teal"
+              />
+
+              {autoReport && (
+                <>
+                  {/* Report type picker — only when autoReport is on */}
+                  <div className="pl-6 ml-4 border-l-2 border-teal-100">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Loại báo cáo
+                    </label>
+                    <select
+                      value={reportType}
+                      onChange={(e) => setReportType(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all bg-white"
+                    >
+                      <option value="research_summary">Tóm tắt nghiên cứu</option>
+                      <option value="literature_review">Tổng quan tài liệu</option>
+                      <option value="data_analysis">Phân tích dữ liệu</option>
+                      <option value="custom">Tùy chỉnh</option>
+                    </select>
+                  </div>
+
+                  <ToggleRow
+                    checked={autoSynthesize}
+                    onChange={setAutoSynthesize}
+                    label="Tổng hợp báo cáo bằng AI (Synthesis)"
+                    description="LLM viết narrative xuyên tài liệu + sinh trích dẫn [n]"
+                    icon={Sparkles}
+                    accent="violet"
+                    indented
+                  />
+                  <ToggleRow
+                    checked={autoQA}
+                    onChange={setAutoQA}
+                    label="Kiểm chất lượng báo cáo (QA)"
+                    description="Format · Citation · Fact-check · Grammar — chấm điểm 0-100"
+                    icon={ShieldCheck}
+                    accent="emerald"
+                    indented
+                  />
+                </>
+              )}
+            </div>
+          </div>
+
           {/* Pipeline preview */}
           <div className="bg-gradient-to-br from-violet-50 to-fuchsia-50 border border-violet-200 rounded-xl p-4">
             <p className="text-xs font-bold text-violet-700 uppercase tracking-wide mb-3">
               Pipeline tự động sẽ chạy
             </p>
             <ol className="space-y-2 text-sm">
-              <li className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-violet-100 text-violet-700 text-xs font-bold flex items-center justify-center">
-                  <Search className="w-3.5 h-3.5" />
-                </span>
-                <div className="flex-1">
-                  <p className="font-semibold text-slate-800">
-                    Tìm kiếm {maxResults} tài liệu
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    arXiv · Google Scholar · Semantic Scholar (chạy song song)
-                  </p>
-                </div>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-violet-100 text-violet-700 text-xs font-bold flex items-center justify-center">
-                  <Download className="w-3.5 h-3.5" />
-                </span>
-                <div className="flex-1">
-                  <p className="font-semibold text-slate-800">
-                    Tải về top {maxDocuments} tài liệu
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Tự tìm PDF (Unpaywall · arXiv) hoặc fallback HTML, chunk +
-                    embed
-                  </p>
-                </div>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-violet-100 text-violet-700 text-xs font-bold flex items-center justify-center">
-                  <Brain className="w-3.5 h-3.5" />
-                </span>
-                <div className="flex-1">
-                  <p className="font-semibold text-slate-800">
-                    Phân tích từng tài liệu
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Trích xuất sections, claims, bảng, công thức, tổng hợp
-                  </p>
-                </div>
-              </li>
+              <PipelineStep
+                icon={Search}
+                title={`Tìm kiếm ${maxResults} tài liệu`}
+                subtitle="arXiv · Google Scholar · Semantic Scholar (chạy song song)"
+              />
+              <PipelineStep
+                icon={Download}
+                title={`Tải về top ${maxDocuments} tài liệu`}
+                subtitle="Tự tìm PDF (Unpaywall · arXiv) hoặc fallback HTML, chunk + embed"
+              />
+              <PipelineStep
+                icon={Brain}
+                title="Phân tích từng tài liệu"
+                subtitle="Trích xuất sections, claims, bảng, công thức, tổng hợp"
+              />
+              {autoReport && (
+                <PipelineStep
+                  icon={ClipboardList}
+                  title="Tạo báo cáo dự án"
+                  subtitle={`Report type: ${REPORT_TYPE_LABELS[reportType]} · deterministic, không LLM`}
+                  accent="teal"
+                />
+              )}
+              {autoReport && autoSynthesize && (
+                <PipelineStep
+                  icon={Sparkles}
+                  title="Synthesis bằng LLM"
+                  subtitle="Viết lại narrative xuyên tài liệu, thêm trích dẫn [n], tóm tắt điều hành"
+                  accent="violet"
+                />
+              )}
+              {autoReport && autoQA && (
+                <PipelineStep
+                  icon={ShieldCheck}
+                  title="Kiểm chất lượng (QA)"
+                  subtitle="Format · Citation · Fact-check · Grammar → score 0-100"
+                  accent="emerald"
+                />
+              )}
             </ol>
           </div>
 
           {/* Quota hint */}
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
             <p className="text-xs text-amber-800">
-              <span className="font-semibold">⚠ Lưu ý quota:</span> Pipeline
-              này dùng nhiều LLM call hơn 1 phân tích đơn (≈ {maxDocuments} ×
-              6-7 calls). Free tier Gemini (5 RPM) có thể chậm 5-10 phút; Groq
-              (30 RPM) nhanh hơn nhiều.
+              <span className="font-semibold">⚠ Lưu ý quota:</span>{" "}
+              {(() => {
+                let calls = maxDocuments * 6; // analyse calls
+                if (autoReport && autoSynthesize) calls += 3;
+                if (autoReport && autoQA) calls += 2;
+                return (
+                  <>
+                    Pipeline này dùng ≈ <strong>{calls}</strong> LLM call
+                    {calls === 1 ? "" : "s"}
+                    {autoReport && (autoSynthesize || autoQA) && (
+                      <>
+                        {" "}
+                        ({maxDocuments}×6 phân tích
+                        {autoSynthesize && " + 3 synthesis"}
+                        {autoQA && " + 2 QA"})
+                      </>
+                    )}
+                    . Free tier Gemini (5 RPM) có thể chậm 5-10 phút; Groq
+                    (30 RPM) nhanh hơn nhiều.
+                  </>
+                );
+              })()}
             </p>
           </div>
 
@@ -474,6 +579,84 @@ const AutoResearchModal = ({ projectId, onClose, onLaunched }) => {
         </form>
       </div>
     </div>
+  );
+};
+
+const REPORT_TYPE_LABELS = {
+  research_summary: "Tóm tắt nghiên cứu",
+  literature_review: "Tổng quan tài liệu",
+  data_analysis: "Phân tích dữ liệu",
+  custom: "Tùy chỉnh",
+};
+
+const ToggleRow = ({
+  checked,
+  onChange,
+  label,
+  description,
+  icon: Icon,
+  accent = "teal",
+  indented = false,
+}) => {
+  const accentClass =
+    accent === "violet"
+      ? "border-violet-500 bg-violet-50"
+      : accent === "emerald"
+      ? "border-emerald-500 bg-emerald-50"
+      : "border-teal-500 bg-teal-50";
+  const iconBg =
+    accent === "violet"
+      ? "bg-violet-100 text-violet-600"
+      : accent === "emerald"
+      ? "bg-emerald-100 text-emerald-600"
+      : "bg-teal-100 text-teal-600";
+
+  return (
+    <label
+      className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+        checked ? accentClass : "border-slate-200 hover:border-slate-300"
+      } ${indented ? "ml-4 border-l-2 border-l-teal-100 pl-4" : ""}`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 w-4 h-4 text-teal-600 cursor-pointer"
+      />
+      <div className={`p-1.5 rounded-lg flex-shrink-0 ${iconBg}`}>
+        <Icon className="w-3.5 h-3.5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-slate-900 leading-snug">
+          {label}
+        </p>
+        <p className="text-xs text-slate-500 mt-0.5 leading-snug">
+          {description}
+        </p>
+      </div>
+    </label>
+  );
+};
+
+const PipelineStep = ({ icon: Icon, title, subtitle, accent = "violet" }) => {
+  const tone =
+    accent === "teal"
+      ? "bg-teal-100 text-teal-700"
+      : accent === "emerald"
+      ? "bg-emerald-100 text-emerald-700"
+      : "bg-violet-100 text-violet-700";
+  return (
+    <li className="flex items-start gap-3">
+      <span
+        className={`flex-shrink-0 w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${tone}`}
+      >
+        <Icon className="w-3.5 h-3.5" />
+      </span>
+      <div className="flex-1">
+        <p className="font-semibold text-slate-800">{title}</p>
+        <p className="text-xs text-slate-500">{subtitle}</p>
+      </div>
+    </li>
   );
 };
 
