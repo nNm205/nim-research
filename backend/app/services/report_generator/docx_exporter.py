@@ -1,15 +1,12 @@
 from __future__ import annotations
-
 import io
 from datetime import datetime
 from typing import Iterable
 from uuid import UUID
-
 from docx import Document as DocxDocument
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
 from sqlalchemy.orm import Session
-
 from app.models.project import Project
 from app.services.report_generator.aggregator import (
     DocumentBlock,
@@ -18,7 +15,6 @@ from app.services.report_generator.aggregator import (
 )
 from app.utils.constants import ReportType
 
-
 _REPORT_TYPE_LABEL_VI = {
     ReportType.RESEARCH_SUMMARY.value: "Tóm tắt nghiên cứu",
     ReportType.LITERATURE_REVIEW.value: "Tổng quan tài liệu",
@@ -26,7 +22,6 @@ _REPORT_TYPE_LABEL_VI = {
     ReportType.CUSTOM.value: "Báo cáo tùy chỉnh",
 }
 
-# Brand color (matches the FE teal palette).
 _ACCENT_RGB = RGBColor(0x0F, 0x76, 0x6E)
 
 
