@@ -1,27 +1,6 @@
-"""SynthesisAgent + QualityAssuranceAgent endpoints.
-
-All endpoints are scoped to an existing ``Report`` row. Ownership is
-verified via the report's project.
-
-Endpoints:
-
-  POST   /api/v1/reports/{report_id}/synthesize        — dispatch SynthesisAgent
-  GET    /api/v1/reports/{report_id}/synthesis/status  — poll progress
-  GET    /api/v1/reports/{report_id}/synthesis         — full result
-  POST   /api/v1/reports/{report_id}/synthesis/rollback — restore template content
-
-  POST   /api/v1/reports/{report_id}/qa                — dispatch QualityAssuranceAgent
-  GET    /api/v1/reports/{report_id}/qa/status         — poll QA progress
-  GET    /api/v1/reports/{report_id}/qa/report         — fetch QA report
-
-  POST   /api/v1/reports/{report_id}/full-pipeline     — synthesize + QA chained
-"""
-
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.database.session import get_async_db
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -51,10 +30,6 @@ from app.utils.logger import logger
 
 
 router = APIRouter(prefix="/api/v1", tags=["Synthesis & QA"])
-
-
-# ── Synthesis ───────────────────────────────────────────────────────────
-
 
 @router.post(
     "/reports/{report_id}/synthesize",
@@ -127,12 +102,6 @@ async def rollback_synthesis(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Restore the report's content/html_content from the template snapshot
-    saved in ``synthesis_metadata.original_template_*``.
-
-    Useful when the user wants to revert a synthesised report back to the
-    deterministic template version.
-    """
     report = await get_report_for_synthesis(db=db, report_id=report_id)
     await verify_project_ownership_async(
         db=db, project_id=report.project_id, user_id=current_user.id
@@ -155,7 +124,6 @@ async def rollback_synthesis(
     if isinstance(original_html, str):
         report.html_content = original_html
 
-    # Clear synthesis state — it's no longer reflected in the content.
     report.synthesis_status = None
     report.synthesis_error = None
     report.synthesis_metadata = None
@@ -167,10 +135,6 @@ async def rollback_synthesis(
     await db.refresh(report)
     logger.info(f"Synthesis rollback applied for report {report.id}")
     return report
-
-
-# ── Quality Assurance ───────────────────────────────────────────────────
-
 
 @router.post(
     "/reports/{report_id}/qa",
@@ -238,10 +202,6 @@ async def get_qa_report(
     )
     return report
 
-
-# ── Combined pipeline ──────────────────────────────────────────────────
-
-
 @router.post(
     "/reports/{report_id}/full-pipeline",
     response_model=SynthesisStatusResponse,
@@ -253,12 +213,6 @@ async def start_full_pipeline(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Run synthesis followed by QA on the same report.
-
-    Both pipelines run sequentially in one background task. The FE polls
-    the synthesis status endpoint until completion, then switches to the
-    QA status endpoint to track the second stage.
-    """
     report = await get_report_for_synthesis(db=db, report_id=report_id)
     await verify_project_ownership_async(
         db=db, project_id=report.project_id, user_id=current_user.id

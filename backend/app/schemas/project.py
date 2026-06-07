@@ -41,21 +41,16 @@ class ProjectResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def populate_counts(cls, data: Any) -> Any:
-        # Only applies when validating from an ORM object (not a dict)
         if isinstance(data, dict):
             return data
 
         result = {}
 
-        # Copy all scalar fields
         for field in ["id", "user_id", "name", "description", "topic",
                       "research_scope", "status", "is_archived",
                       "created_at", "updated_at"]:
             result[field] = getattr(data, field, None)
 
-        # Counts. Prefer scalar attributes the service may have attached
-        # (``_document_count`` etc.) so we don't trigger a lazy-load of
-        # the full collection just to call ``len()`` on it.
         for attr, key in [
             ("_document_count", "document_count"),
             ("_research_session_count", "research_session_count"),

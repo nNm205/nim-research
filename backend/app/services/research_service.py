@@ -183,10 +183,6 @@ async def update_research_status(
 
 
 async def _run_agent_in_background(research_session_id: UUID) -> None:
-    """
-    Runs ResearchAgent in its own DB session so it doesn't share the
-    request-scoped session (which closes when the HTTP response is sent).
-    """
     from app.agents.research_agent import ResearchAgent
 
     async with AsyncSessionLocal() as db:
@@ -194,26 +190,15 @@ async def _run_agent_in_background(research_session_id: UUID) -> None:
             agent = ResearchAgent(db)
             await agent.run(research_session_id)
         except Exception as e:
-            # Error is already persisted inside ResearchAgent._mark_failed()
             logger.error(
                 f"Background research task failed for session "
                 f"{research_session_id}: {e}"
             )
 
-
-# Strong refs to fire-and-forget tasks. asyncio's event loop only keeps
-# *weak* references to tasks (per the docs); without this set the GC can
-# collect and silently cancel the coroutine mid-run, which leaves the
-# ResearchSession row stuck at status='running' forever and the FE
-# stuck on the live progress panel. Same pattern as analysis_service.
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 def dispatch_research_agent(research_session_id: UUID) -> None:
-    """
-    Fire-and-forget: schedules the agent as an asyncio background task.
-    Call this after the HTTP response has been committed.
-    """
     task = asyncio.create_task(_run_agent_in_background(research_session_id))
     _BACKGROUND_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_TASKS.discard)

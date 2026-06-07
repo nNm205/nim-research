@@ -19,37 +19,13 @@ from app.tools.search.publisher_classifier import (
 )
 from app.utils.logger import logger
 
-
-# ── Skip exceptions ──────────────────────────────────────────────────────────
-#
-# Raised by ``ingest_from_search_result`` to signal "skip this result"
-# in a structured way. The auto-research orchestrator catches these and
-# logs a clean reason on the progress feed without poisoning its own
-# session — they're expected outcomes, not bugs.
-
 class IngestSkipped(Exception):
-    """Base class — caller should treat this result as "skipped, not failed"."""
-
 
 class NonAcademicSourceError(IngestSkipped):
-    """Search result's publisher is not in the trusted whitelist
-    (arXiv / IEEE / ACM / ResearchGate)."""
-
 
 class NoAcademicPdfError(IngestSkipped):
-    """Publisher is trusted but no PDF could be located for this paper.
-
-    Common reasons:
-      - IEEE / ACM article is paywalled and Unpaywall has no OA copy
-      - ResearchGate-hosted PDF was rejected per ToS and no other
-        OA copy exists
-      - Search result lacks both ``pdf_url`` and ``doi``
-    """
-
 
 class PdfIngestError(IngestSkipped):
-    """PDF download / parse failed mid-pipeline."""
-
 
 def _build_embedder(
     provider_override: str | None = None,
@@ -76,14 +52,11 @@ class DocumentIngestionService:
         self.embedder = _build_embedder(embedding_provider, embedding_model)
         self.vector_store = VectorStoreFactory.create(db)
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
-
     def _is_pdf_url(self, url: str) -> bool:
-        """Detect PDF by URL extension or common PDF hosting patterns."""
-        url_lower = url.lower().split("?")[0]  # strip query params
+        url_lower = url.lower().split("?")[0] 
         if url_lower.endswith(".pdf"):
             return True
-        # arXiv PDF links
+       
         if "arxiv.org/pdf/" in url_lower:
             return True
         return False
@@ -98,7 +71,6 @@ class DocumentIngestionService:
         tables: list | None = None,
         formulas: list | None = None,
     ) -> Document:
-        """Shared logic: create Document, chunk, embed, upsert vectors."""
         document_metadata: dict | None = None
         if tables or formulas:
             document_metadata = {}
@@ -121,10 +93,8 @@ class DocumentIngestionService:
         self.db.add(document)
         await self.db.flush()
 
-        # Chunk
         tool_chunks = await self.chunker.chunk(text)
 
-        # Create ORM chunk models with section metadata for downstream analysis
         chunk_models = []
         for tool_chunk in tool_chunks:
             chunk = DocumentChunk(
@@ -138,10 +108,8 @@ class DocumentIngestionService:
         self.db.add_all(chunk_models)
         await self.db.flush()
 
-        # Embed
         embedded_chunks = await self.embedder.embed_chunks(tool_chunks)
 
-        # Upsert vectors
         chunk_ids = [chunk.id for chunk in chunk_models]
         vectors = [ec.embedding for ec in embedded_chunks]
 
@@ -157,42 +125,13 @@ class DocumentIngestionService:
 
         return document
 
-    # ── Public methods ────────────────────────────────────────────────────────
-
     async def ingest_from_search_result(
         self,
         project_id: UUID,
         search_result,
     ) -> Document:
-        """Best-effort ingest of a SearchResult row.
-
-        Policy: ONLY trusted publishers (arXiv / IEEE / ACM / ResearchGate)
-        AND ONLY when a downloadable PDF can be located.
-
-        We classify by publisher (DOI prefix + URL host) rather than by
-        search source because Google Scholar / Semantic Scholar surface
-        papers from many publishers — only the ones that came from the
-        4 trusted ones should be ingested.
-
-        Strategy:
-          1. Classify the search hit's publisher. If it's not trusted,
-             raise ``NonAcademicSourceError`` — the user explicitly does
-             not want non-academic sources in their corpus.
-          2. Locate a downloadable PDF (existing ``pdf_url``, derived
-             arXiv link, Unpaywall via DOI, or scraped from the landing
-             page). ResearchGate-hosted PDFs are NEVER fetched; the
-             finder resolves through Unpaywall instead per RG's ToS.
-          3. If found: ingest it via ``ingest_pdf``.
-          4. If no PDF is reachable: raise ``NoAcademicPdfError`` so the
-             caller can skip this result instead of silently falling back
-             to a (potentially low-quality) HTML page.
-
-        On success, returns a ``Document`` with ``source_type='pdf'``
-        and the publisher recorded in ``document_metadata.publisher``.
-        """
         from app.services.pdf_finder_service import PDFFinderService
 
-        # ── 1. Publisher whitelist ──────────────────────────────────────
         source_value = getattr(search_result, "source", None)
         source_str = getattr(source_value, "value", source_value)
         publisher = classify_publisher(
@@ -207,7 +146,6 @@ class DocumentIngestionService:
                 f"học thuật đáng tin cậy (arXiv, IEEE, ACM, ResearchGate)."
             )
 
-        # ── 2. Locate PDF ───────────────────────────────────────────────
         finder = PDFFinderService()
         pdf_url = await finder.find(
             url=getattr(search_result, "url", None),
@@ -229,7 +167,6 @@ class DocumentIngestionService:
                 + extra
             )
 
-        # ── 3. Ingest the PDF ───────────────────────────────────────────
         logger.info(
             f"DocumentIngestion: search result "
             f"{getattr(search_result, 'id', '?')} "
@@ -240,23 +177,16 @@ class DocumentIngestionService:
                 project_id=project_id, pdf_url=pdf_url
             )
         except Exception as e:
-            # PDF download or parse failed — DO NOT fall back to HTML.
-            # Surface the error so the caller can record it as a skip.
             raise PdfIngestError(
                 f"Tải hoặc phân tích PDF thất bại: {e}"
             ) from e
 
-        # Override the title if the search result has a cleaner one than
-        # what the PDF parser auto-detected.
         title = getattr(search_result, "title", None)
         if title and (
             not doc.title or doc.title.strip().lower() == "untitled"
         ):
             doc.title = title
 
-        # Stamp the publisher onto the document metadata so the FE can
-        # render a "IEEE" / "ACM" / "arXiv" / "ResearchGate" chip on
-        # the document card.
         meta = dict(doc.document_metadata or {})
         meta["publisher"] = publisher.value
         doc.document_metadata = meta
@@ -306,17 +236,9 @@ class DocumentIngestionService:
         filename: str,
         content_type: str | None = None,
     ) -> Document:
-        """Persist an uploaded file (PDF or HTML) and run the full pipeline.
-
-        We accept the file in-memory (FastAPI ``UploadFile.read()``) and
-        write it to a NamedTemporaryFile on disk so the existing parsers
-        — which expect a ``Path`` argument — work unchanged. The temp
-        file is removed once parsing completes.
-        """
         import tempfile
         from pathlib import Path
 
-        # Decide which parser to use. Prefer extension; fall back to mime type.
         lower = (filename or "").lower()
         is_pdf = lower.endswith(".pdf") or (content_type or "").lower().startswith(
             "application/pdf"
@@ -333,8 +255,6 @@ class DocumentIngestionService:
             )
 
         suffix = ".pdf" if is_pdf else ".html"
-
-        # Persist to a temp file because parsers operate on file paths.
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp_path = Path(tmp.name)
         try:
@@ -354,8 +274,6 @@ class DocumentIngestionService:
             return await self._persist_document_and_chunks(
                 project_id=project_id,
                 title=parsed_doc.title or filename,
-                # Uploaded files have no canonical URL; record the original
-                # filename in source_url for traceability.
                 source_url=f"upload://{filename}",
                 source_type=source_type,
                 text=parsed_doc.text,
@@ -416,7 +334,6 @@ class DocumentIngestionService:
         url: str,
         source_type: str = "web",
     ) -> Document:
-        """Auto-detect PDF vs HTML and ingest accordingly."""
         if self._is_pdf_url(url):
             return await self.ingest_pdf(project_id, url)
         else:

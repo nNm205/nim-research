@@ -11,12 +11,6 @@ class AnalysisCreate(BaseModel):
 
 
 class AnalysisListItemResponse(BaseModel):
-    """Compact analysis row for list endpoints.
-
-    Excludes every heavy JSONB / TEXT column. The frontend list view
-    (project analyses, dashboard) only needs status + dates + the document
-    title — everything else is fetched on-demand from the detail page.
-    """
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -38,11 +32,6 @@ class AnalysisListItemResponse(BaseModel):
     @computed_field
     @property
     def project_id(self) -> UUID | None:
-        """The owning project — derived from the eagerly-loaded document.
-
-        Used by the cross-project Analysis page so the FE can group by
-        project without a second round-trip.
-        """
         doc = getattr(self, "document", None)
         if doc is None:
             return None
@@ -95,12 +84,6 @@ class DocumentAnalysisResponse(BaseModel):
     @computed_field
     @property
     def project_id(self) -> UUID | None:
-        """The owning project — derived from the eagerly-loaded document.
-
-        Exposed so the FE results page can pass ``projectId`` down to
-        the inline progress component (which polls the
-        per-project status endpoint).
-        """
         doc = getattr(self, "document", None)
         if doc is None:
             return None

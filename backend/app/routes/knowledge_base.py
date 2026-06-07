@@ -33,7 +33,6 @@ from app.services.knowledge_base_service import (
 
 router = APIRouter(prefix="/api/v1", tags=["Knowledge Base"])
 
-# Public endpoints - for all users
 @router.get(
     "/knowledge-base/articles",
     response_model=KnowledgeBaseArticleListResponse
@@ -74,12 +73,10 @@ def get_article_details(
         article_id=article_id
     )
 
-    # Increment views
     increment_article_views(db=db, article=article)
 
     return article
 
-# User submission endpoints
 @router.post(
     "/knowledge-base/submissions",
     response_model=KnowledgeBaseSubmissionResponse,
@@ -90,7 +87,6 @@ def create_new_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """User submits a new article for review"""
     submission = create_submission(
         db=db,
         submission_data=submission_data,
@@ -109,7 +105,6 @@ def get_my_submissions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get current user's submissions"""
     submissions, total = get_user_submissions(
         db=db,
         user_id=current_user.id,
@@ -122,7 +117,6 @@ def get_my_submissions(
         "total": total
     }
 
-# Admin endpoints
 @router.get(
     "/knowledge-base/submissions/pending",
     response_model=KnowledgeBaseSubmissionListResponse
@@ -133,7 +127,6 @@ def list_pending_submissions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin: Get pending submissions for review"""
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -161,7 +154,6 @@ def approve_new_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin: Approve a submission and publish it"""
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -191,7 +183,6 @@ def reject_new_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin: Reject a submission"""
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -212,7 +203,6 @@ def reject_new_submission(
 
     return submission
 
-# Admin: Direct article management (for admin-created articles)
 @router.post(
     "/knowledge-base/articles",
     response_model=KnowledgeBaseArticleResponse,
@@ -223,7 +213,6 @@ def create_new_article(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin: Create article directly (bypasses review)"""
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -248,7 +237,6 @@ def update_existing_article(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin: Update article"""
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -275,7 +263,6 @@ def delete_existing_article(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin: Delete article"""
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

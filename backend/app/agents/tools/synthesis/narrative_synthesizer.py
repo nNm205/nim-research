@@ -1,16 +1,7 @@
-"""NarrativeSynthesizerTool — write the narrative for each outline section.
-
-Single LLM call; output is a JSON map keyed by ``section.key``. We send a
-compressed digest of the documents alongside the outline so the LLM can
-cite [n] inline.
-"""
-
 from __future__ import annotations
-
 import json
 import re
 from typing import Any
-
 from app.agents.tools.analysis.json_utils import parse_llm_json
 from app.agents.tools.synthesis.context_loader import SynthesisContext
 from app.prompts.synthesis import (
@@ -19,18 +10,10 @@ from app.prompts.synthesis import (
 )
 from app.utils.logger import logger
 
-
-# Hard cap on the digest sent to the LLM to keep the input under model
-# context limits.
 _MAX_DIGEST_CHARS = 18_000
-
-
 _CITATION_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 
-
 class NarrativeSynthesizerTool:
-    """Produce per-section narrative bodies."""
-
     async def synthesize(
         self,
         context: SynthesisContext,
@@ -90,8 +73,6 @@ class NarrativeSynthesizerTool:
 
         return self._normalise(parsed, context, outline)
 
-    # ── Helpers ──────────────────────────────────────────────────────────
-
     def _normalise(
         self, parsed: dict, context: SynthesisContext, outline: dict
     ) -> dict:
@@ -106,7 +87,6 @@ class NarrativeSynthesizerTool:
             key = s["key"]
             entry = sections_raw.get(key)
             if not isinstance(entry, dict):
-                # Missing section — fill with a heuristic placeholder
                 out_sections[key] = self._fallback_section(s, context)
                 continue
 
@@ -138,7 +118,6 @@ class NarrativeSynthesizerTool:
     def _fallback_section(
         self, section: dict, context: SynthesisContext
     ) -> dict:
-        """Build a heuristic body from document summaries."""
         doc_indices = section.get("documents_to_use") or [
             d.index for d in context.documents_with_analysis
         ]
@@ -168,7 +147,6 @@ class NarrativeSynthesizerTool:
 
 
 def _extract_cited_indices(body: str, valid: set[int]) -> list[int]:
-    """Pull every `[n]` (and `[n, m]`) reference from a body string."""
     seen: set[int] = set()
     out: list[int] = []
     for m in _CITATION_RE.finditer(body):

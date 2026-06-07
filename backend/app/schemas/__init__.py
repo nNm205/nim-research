@@ -1,10 +1,3 @@
-"""Public schema re-exports.
-
-Convenience layer so callers can ``from app.schemas import ProjectResponse``
-without remembering each file. Add new top-level schemas here when you
-introduce them.
-"""
-
 from app.schemas.analysis import (
     AnalysisStatusResponse,
     DocumentAnalysisResponse,

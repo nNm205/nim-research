@@ -17,26 +17,10 @@ def _annotate_counts(
     db: Session,
     projects: list[Project],
 ) -> list[Project]:
-    """Attach scalar count attributes to each project in the list.
-
-    Counts ``_document_count`` / ``_research_session_count`` /
-    ``_analysis_count`` / ``_report_count`` are computed in **one** SQL
-    statement that LEFT JOINs four ``GROUP BY`` subqueries against
-    ``projects``. Previously we issued four separate queries — fine
-    when the DB lives next to the API but a meaningful round-trip cost
-    on Supabase / Supavisor where every query traverses the pooler.
-
-    ``_analysis_count`` requires a sub-join through ``Document`` because
-    ``DocumentAnalysis`` has no direct ``project_id`` column — analyses
-    live one level removed, attached to a document.
-    """
     if not projects:
         return projects
 
     project_ids = [p.id for p in projects]
-
-    # Per-relation aggregate subqueries. Each returns
-    # ``(project_id, count)`` rows.
     doc_sub = (
         select(
             Document.project_id.label("pid"),
@@ -75,9 +59,6 @@ def _annotate_counts(
         .subquery("ana_counts")
     )
 
-    # Single SELECT — one round-trip — fanning out via LEFT JOINs.
-    # ``coalesce(..., 0)`` so a project with zero docs / analyses still
-    # comes back as 0 instead of NULL.
     rows = db.execute(
         select(
             Project.id,
@@ -146,7 +127,6 @@ def create_project(
         db.commit()
         db.refresh(new_project)
 
-        # Newly-created project has zero of every related collection.
         new_project._document_count = 0
         new_project._research_session_count = 0
         new_project._analysis_count = 0
@@ -327,7 +307,6 @@ def update_project(
         db.commit()
         db.refresh(project)
 
-        # Re-annotate counts so the response stays consistent.
         _annotate_counts(db, [project])
 
         logger.success(

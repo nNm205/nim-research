@@ -1,19 +1,3 @@
-"""Prompt templates for the QualityAssuranceAgent pipeline.
-
-Two LLM calls per QA run:
-  1. FACT_CHECK_*  — verify a sample of the report's claims against the
-                    underlying analysis evidence (claims + quotes).
-  2. GRAMMAR_*     — VN/EN grammar + clarity pass over the report body.
-
-Format / citation checks are 100% deterministic — no LLM needed.
-"""
-
-# ---------------------------------------------------------------------------
-# 1. FACT CHECK — verify a sample of report claims against analysis evidence
-# Temperature: 0.1   Max tokens: ~2000
-# Output: JSON
-# ---------------------------------------------------------------------------
-
 FACT_CHECK_SYSTEM_PROMPT = """You are a meticulous fact-checker. You are
 given:
 
@@ -64,13 +48,6 @@ Evidence (document index → digest):
 {evidence_json}
 
 Return the JSON verdicts object."""
-
-
-# ---------------------------------------------------------------------------
-# 2. GRAMMAR + CLARITY — surface grammar / spelling / clarity issues
-# Temperature: 0.1   Max tokens: ~2000
-# Output: JSON list
-# ---------------------------------------------------------------------------
 
 GRAMMAR_SYSTEM_PROMPT = """You are a senior bilingual editor (Vietnamese
 and English). You review research-report prose and surface concrete

@@ -1,66 +1,19 @@
-"""CitationManagerTool — deterministic BibTeX + APA citation builder.
-
-Builds citation entries from the document metadata already loaded in the
-SynthesisContext. No LLM. Two output formats:
-
-  - APA       — used in the rendered references list
-  - BibTeX    — exported as a separate ``.bib`` block alongside the report
-
-Only documents that were actually cited in the narrative get an entry; the
-``cited_indices`` parameter lets the agent pass in which documents the
-narrative referenced. We dedupe on ``(authors, year, title)``.
-"""
-
 from __future__ import annotations
-
 import re
 from datetime import datetime
 from typing import Iterable
-
 from app.agents.tools.synthesis.context_loader import (
     DocumentItem,
     SynthesisContext,
 )
 
-
-# ── Public API ───────────────────────────────────────────────────────────
-
-
 class CitationManagerTool:
-    """Produce APA + BibTeX strings for the cited documents."""
-
     def build(
         self,
         context: SynthesisContext,
         cited_indices: Iterable[int],
     ) -> dict:
-        """Return a dict with ``entries`` (per-doc) plus rendered strings.
-
-        Shape:
-          {
-            "entries": [
-              {
-                "index": int,
-                "doc_id": str,
-                "title": str,
-                "authors": [str],
-                "year": str | None,
-                "url": str | None,
-                "doi": str | None,
-                "apa": str,
-                "bibtex": str,
-                "bibtex_key": str
-              },
-              ...
-            ],
-            "apa_text": "1. Doe, J. (2024). ...\\n2. ...",
-            "bibtex_text": "@article{doe2024foo, ...}\\n\\n@misc{...}"
-          }
-        """
         cited_set = set(cited_indices) if cited_indices else set()
-        # If no cited indices were detected, include EVERY analyzed
-        # document — the user still wants a references section even if
-        # the LLM forgot inline [n] markers.
         if not cited_set:
             cited_set = {d.index for d in context.documents_with_analysis}
         if not cited_set:
@@ -111,16 +64,11 @@ class CitationManagerTool:
             "bibtex_text": bibtex_text,
         }
 
-
-# ── Formatters ───────────────────────────────────────────────────────────
-
-
 def _year_from(published_at: str | None) -> str | None:
     if not published_at:
         return None
     m = re.match(r"^(\d{4})", published_at)
     return m.group(1) if m else None
-
 
 def _format_authors_apa(authors: list[str]) -> str:
     if not authors:
@@ -136,14 +84,12 @@ def _format_authors_apa(authors: list[str]) -> str:
 
 
 def _apa_name(full_name: str) -> str:
-    """`John Doe` → `Doe, J.`. Best-effort; leaves ambiguous names untouched."""
     parts = full_name.strip().split()
     if len(parts) < 2:
         return full_name.strip()
     last = parts[-1]
     initials = " ".join(f"{p[0]}." for p in parts[:-1] if p)
     return f"{last}, {initials}".strip(", ")
-
 
 def _format_apa(doc: DocumentItem, year: str | None) -> str:
     parts: list[str] = []
@@ -166,7 +112,6 @@ def _format_apa(doc: DocumentItem, year: str | None) -> str:
 
 
 def _format_bibtex(doc: DocumentItem, key: str, year: str | None) -> str:
-    """Pick @article when there's a DOI; @misc otherwise."""
     entry_type = "article" if doc.doi else "misc"
     fields: list[tuple[str, str]] = []
     if doc.authors:
@@ -186,7 +131,6 @@ def _format_bibtex(doc: DocumentItem, key: str, year: str | None) -> str:
 
 
 def _bibtex_escape(s: str) -> str:
-    """Escape characters that BibTeX treats specially."""
     if not s:
         return ""
     return (
@@ -198,7 +142,6 @@ def _bibtex_escape(s: str) -> str:
 
 
 def _make_bibtex_key(doc: DocumentItem, year: str | None) -> str:
-    """E.g. `doe2024transformer`."""
     last_name = ""
     if doc.authors:
         first_author = doc.authors[0]

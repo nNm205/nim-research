@@ -1,9 +1,5 @@
-"""ExecutiveSummaryGeneratorTool — single LLM call for the cover summary."""
-
 from __future__ import annotations
-
 from typing import Any
-
 from app.agents.tools.analysis.json_utils import parse_llm_json
 from app.prompts.synthesis import (
     EXECUTIVE_SUMMARY_SYSTEM_PROMPT,
@@ -11,13 +7,9 @@ from app.prompts.synthesis import (
 )
 from app.utils.logger import logger
 
-
 _MAX_NARRATIVE_CHARS = 14_000
 
-
 class ExecutiveSummaryGeneratorTool:
-    """Produce a short executive summary + 4-6 bullet takeaways."""
-
     async def generate(
         self,
         report_title: str,
@@ -62,8 +54,6 @@ class ExecutiveSummaryGeneratorTool:
 
         return self._normalise(parsed, narrative_text)
 
-    # ── Helpers ──────────────────────────────────────────────────────────
-
     def _normalise(self, parsed: dict, narrative_text: str) -> dict:
         summary = parsed.get("executive_summary")
         if not isinstance(summary, str) or not summary.strip():
@@ -80,7 +70,6 @@ class ExecutiveSummaryGeneratorTool:
         }
 
     def _fallback(self, narrative_text: str) -> dict:
-        # Crude fallback — first 3 sentences of the narrative.
         text = narrative_text.replace("\n", " ").strip()
         chunks = []
         for piece in text.split(". "):

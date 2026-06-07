@@ -1,27 +1,6 @@
-"""SectionInsightTool — extract structured insights for a single section.
-
-Cost model: ONE LLM call per section. Long sections are truncated rather
-than map-reduced because map-reduce burns N+1 LLM calls per section, which
-quickly exhausts free-tier quota (Gemini: 5 RPM, Groq: 30 RPM). Modern LLMs
-handle 16 K characters easily, and section_insight prompts only need the
-"shape" of the content — the head + tail of a long section is enough for the
-LLM to extract claims, methods, data, tables, formulas. Truncation strategy:
-keep the first ~10 K chars and the last ~6 K chars, skipping the middle.
-
-The output schema is documented in app/prompts/analysis.py
-(``SECTION_INSIGHT_SYSTEM_PROMPT``).
-
-Robustness contract: ``analyse()`` ALWAYS returns a section insight dict
-even when the LLM fails. When the LLM returns nothing parseable, we fall
-back to a heuristic summary derived from the raw section text so the UI
-never shows a fully empty card with no signal at all.
-"""
-
 from __future__ import annotations
-
 import re
 from typing import Any
-
 from app.agents.tools.analysis.chunk_loader import ChunkRecord  # noqa: F401  used in type hints
 from app.agents.tools.analysis.json_utils import parse_llm_json
 from app.agents.tools.analysis.section_mapper import MappedSection
@@ -32,20 +11,8 @@ from app.prompts.analysis import (
 from app.utils.logger import logger
 
 
-# Hard cap on the section text we send in a single LLM call. Modern LLMs
-# accept much more (Gemini 1M, Claude 200K) but we keep this conservative
-# so we don't blow up the output token budget on the response side.
 _SINGLE_CALL_MAX_CHARS = 16_000
-
-# When a section is longer than the cap, we keep this many chars at the
-# head and the rest at the tail (with a [...] elision marker in the middle).
-# Rationale: in academic writing the opening usually states the claim and
-# the methods, while the closing usually states the results and limitations.
-# Mid-section examples / derivations contribute less per char to the insight.
 _HEAD_BUDGET = 10_000
-
-
-# Empty insight skeleton — used as a safe fallback or to fill missing keys
 _EMPTY_INSIGHT: dict[str, Any] = {
     "summary": None,
     "purpose": None,
@@ -64,8 +31,6 @@ _EMPTY_INSIGHT: dict[str, Any] = {
 
 
 class SectionInsightTool:
-    """Produce one structured insight object per section."""
-
     async def analyse(
         self,
         section: MappedSection,
@@ -74,11 +39,6 @@ class SectionInsightTool:
         total_sections: int,
         llm: Any,
     ) -> dict:
-        """Return a SectionInsight dict (always returns; never raises).
-
-        Always uses a single LLM call. Long sections are truncated head+tail
-        — see module docstring for the rationale.
-        """
         if not section.chunks:
             return self._wrap_section(section, dict(_EMPTY_INSIGHT))
 
@@ -86,21 +46,13 @@ class SectionInsightTool:
             section, document_title, document_type, total_sections, llm
         )
 
-        # Last-resort fallback: if the structured pipeline returned nothing
-        # the user could see (no summary, no key_points, no claims, ...),
-        # synthesise a heuristic summary from the raw section text so the
-        # card never renders as a fully empty placeholder.
         if not self._has_meaningful_content(insight):
             heuristic = self._heuristic_fallback(section)
-            # Preserve any structured items the pipeline did manage to
-            # extract — only fill the empty slots.
             for key, value in heuristic.items():
                 if not insight.get(key):
                     insight[key] = value
 
         return self._wrap_section(section, insight)
-
-    # ── Single-call strategy ────────────────────────────────────────────────
 
     async def _single_call(
         self,
@@ -145,9 +97,6 @@ class SectionInsightTool:
 
         normalised = self._normalise(parsed, section)
 
-        # If the LLM produced syntactically valid JSON but the body has no
-        # meaningful content (every field empty), retry once with the
-        # minimal prompt before giving up.
         if not self._has_meaningful_content(normalised):
             logger.info(
                 f"SectionInsightTool: empty insight from main prompt for "
@@ -161,14 +110,6 @@ class SectionInsightTool:
 
     @staticmethod
     def _truncate_for_llm(text: str) -> str:
-        """Smart head+tail truncation that preserves the [chunk N] labels.
-
-        For sections that fit under the cap, return as-is. Otherwise keep
-        the first ``_HEAD_BUDGET`` chars (head) and the last
-        ``_SINGLE_CALL_MAX_CHARS - _HEAD_BUDGET`` chars (tail), separated
-        by a clearly marked elision so the LLM doesn't think we ran out of
-        text.
-        """
         if len(text) <= _SINGLE_CALL_MAX_CHARS:
             return text
 
@@ -182,12 +123,8 @@ class SectionInsightTool:
             + tail
         )
 
-    # ── Helpers ─────────────────────────────────────────────────────────────
-
     def _normalise(self, insight: dict, section: MappedSection) -> dict:
-        """Coerce LLM output into the canonical schema, filling missing keys."""
         out = dict(_EMPTY_INSIGHT)
-        # Deep-copy critique so callers can mutate safely
         out["critique"] = {"strengths": [], "weaknesses": [], "assumptions": []}
 
         if not isinstance(insight, dict):
@@ -221,7 +158,6 @@ class SectionInsightTool:
                 if isinstance(v, list):
                     out["critique"][sub] = [s for s in v if isinstance(s, str)]
 
-        # Validate notable_quotes chunk_index against this section
         valid_chunk_indices = {c.chunk_index for c in section.chunks}
         cleaned_quotes: list[dict] = []
         for q in out["notable_quotes"]:
@@ -231,7 +167,7 @@ class SectionInsightTool:
             cidx = q.get("chunk_index")
             if not isinstance(quote, str) or not quote.strip():
                 continue
-            # Coerce chunk_index to int and validate
+
             try:
                 cidx_int = int(cidx)
             except (TypeError, ValueError):
@@ -243,8 +179,6 @@ class SectionInsightTool:
             )
         out["notable_quotes"] = cleaned_quotes
 
-        # Validate tables: drop empty rows, coerce chunk_index, ensure
-        # headers / rows are list[str] / list[list[str]]
         cleaned_tables: list[dict] = []
         for t in out["tables"]:
             if not isinstance(t, dict):
@@ -265,7 +199,6 @@ class SectionInsightTool:
                 if any(c.strip() for c in cells):
                     cleaned_rows.append(cells)
 
-            # Drop tables that have neither headers nor rows
             if not headers and not cleaned_rows:
                 continue
 
@@ -287,8 +220,6 @@ class SectionInsightTool:
             })
         out["tables"] = cleaned_tables
 
-        # Validate formulas: drop empty expression, coerce chunk_index, accept
-        # variables list of {symbol, meaning}.
         cleaned_formulas: list[dict] = []
         for f in out["formulas"]:
             if not isinstance(f, dict):
@@ -336,7 +267,6 @@ class SectionInsightTool:
         return out
 
     def _wrap_section(self, section: MappedSection, insight: dict) -> dict:
-        """Wrap a normalised insight with section identity fields."""
         return {
             "section_index": section.index,
             "section_type": section.section_type,
@@ -348,16 +278,7 @@ class SectionInsightTool:
             **insight,
         }
 
-    # ── Retry + fallback helpers ────────────────────────────────────────────
-
     def _has_meaningful_content(self, insight: dict) -> bool:
-        """True iff the insight has anything the user could actually read.
-
-        We require at least one of: a summary, a non-trivial key_points list,
-        a claim, or a method/data/table/formula entry. The "shape" fields
-        (notable_terms / quotes alone) don't count — they're not enough to
-        carry a card on their own.
-        """
         if (insight.get("summary") or "").strip():
             return True
         if insight.get("key_points"):
@@ -371,13 +292,6 @@ class SectionInsightTool:
     async def _minimal_retry(
         self, section: MappedSection, llm: Any
     ) -> dict:
-        """Last-chance LLM call asking only for ``summary`` + ``key_points``.
-
-        Used when the main prompt fails (network error, JSON parse error,
-        or "valid JSON but every field empty"). The minimal schema is far
-        less likely to trigger truncation, safety-filter blocks, or token
-        limits, which means we usually get *something* back.
-        """
         section_text = section.merged_content[:8000]
         prompt = (
             "Read this section of a research document and return a JSON "
@@ -423,18 +337,10 @@ class SectionInsightTool:
         return out
 
     def _heuristic_fallback(self, section: MappedSection) -> dict:
-        """Build a minimal insight from raw text when every LLM call failed.
-
-        Picks the first 2-3 substantive sentences as a summary and a few
-        more as bullet ``key_points`` so the user at least sees the source
-        text instead of an empty card.
-        """
         out = dict(_EMPTY_INSIGHT)
         out["critique"] = {"strengths": [], "weaknesses": [], "assumptions": []}
 
-        # Strip [chunk N] prefixes the merged_content adds for the LLM
         text = re.sub(r"\[chunk \d+\]\s*", "", section.merged_content)
-        # Crude sentence split — good enough for English + Vietnamese papers
         sentences = [
             s.strip()
             for s in re.split(r"(?<=[\.\?!])\s+(?=[A-ZĐĂÂÊÔƠƯ])", text)

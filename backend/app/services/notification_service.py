@@ -1,47 +1,14 @@
-"""Notification service.
-
-Two surfaces:
-
-  1. **Public API** — ``list_notifications`` / ``mark_read`` /
-     ``mark_all_read`` / ``delete_notification``. Used by the FE bell
-     dropdown.
-
-  2. **Internal helper** — ``create_notification(...)`` (sync) and
-     ``create_notification_async(...)`` (async). Called from agent
-     pipelines whenever a long-running task finalises so the user
-     gets a persistent alert even if they navigated to a different
-     page.
-
-The async helper opens its own ``AsyncSessionLocal`` so it can be
-called from background tasks that don't have a request-scoped session
-attached.
-
-Design choices:
-
-- We never raise from ``create_notification*``. A notification write
-  failure must NEVER block the actual pipeline result write. We log
-  and swallow.
-- Reads happen through the sync ``Session`` because the bell endpoint
-  is wired to the sync stack (matches reports / projects routes).
-"""
-
 from __future__ import annotations
-
 from datetime import datetime, timezone
 from uuid import UUID
-
 from fastapi import HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-
 from app.database.session import AsyncSessionLocal, SessionLocal
 from app.models.notification import Notification
 from app.utils.logger import logger
 
-
-# ── Categories the backend produces. The FE may choose to group/filter
-# by these but the backend stays open — any string is accepted.
 CATEGORY_RESEARCH = "research"
 CATEGORY_AUTO_RESEARCH = "auto_research"
 CATEGORY_ANALYSIS = "analysis"
@@ -50,15 +17,9 @@ CATEGORY_SYNTHESIS = "synthesis"
 CATEGORY_QA = "qa"
 CATEGORY_DOCUMENT = "document"
 CATEGORY_GENERAL = "general"
-
-# ── Notification types — drive icon + tint on the FE.
 TYPE_SUCCESS = "success"
 TYPE_ERROR = "error"
 TYPE_INFO = "info"
-
-
-# ── Public API ──────────────────────────────────────────────────────────────
-
 
 def list_notifications(
     db: Session,
@@ -67,12 +28,6 @@ def list_notifications(
     limit: int = 30,
     only_unread: bool = False,
 ) -> tuple[list[Notification], int]:
-    """Return ``(rows, unread_count)`` for the given user.
-
-    The unread count is computed in a separate aggregate so the bell
-    badge stays accurate even when the list is filtered to a small
-    page.
-    """
     try:
         stmt = (
             select(Notification)
@@ -110,11 +65,6 @@ def mark_read(
     *,
     ids: list[UUID] | None = None,
 ) -> int:
-    """Mark notifications as read.
-
-    When ``ids`` is None / empty, every unread notification belonging to
-    ``user_id`` is marked. Returns the number of rows affected.
-    """
     try:
         now = datetime.now(timezone.utc)
         stmt = (
@@ -140,7 +90,6 @@ def mark_read(
 def delete_notification(
     db: Session, user_id: UUID, notification_id: UUID
 ) -> None:
-    """Hard-delete a single notification owned by ``user_id``."""
     try:
         n = db.scalar(
             select(Notification)
@@ -166,7 +115,6 @@ def delete_notification(
 
 
 def clear_all_notifications(db: Session, user_id: UUID) -> int:
-    """Delete every notification belonging to ``user_id``."""
     try:
         from sqlalchemy import delete
 
@@ -182,10 +130,6 @@ def clear_all_notifications(db: Session, user_id: UUID) -> int:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         )
-
-
-# ── Internal helper used by agents ──────────────────────────────────────────
-
 
 def _build_notification(
     *,
@@ -222,7 +166,6 @@ def create_notification(
     entity_kind: str | None = None,
     project_id: UUID | None = None,
 ) -> Notification | None:
-    """Synchronous create. Errors are swallowed."""
     try:
         n = _build_notification(
             user_id=user_id,
@@ -261,11 +204,6 @@ async def create_notification_async(
     entity_kind: str | None = None,
     project_id: UUID | None = None,
 ) -> None:
-    """Async create. Opens its own session if ``db`` is omitted, so it
-    works from background tasks where no session is in scope.
-
-    Errors are swallowed — see module docstring.
-    """
     try:
         n = _build_notification(
             user_id=user_id,
@@ -291,16 +229,7 @@ async def create_notification_async(
             f"create_notification_async failed for user={user_id}: {e}"
         )
 
-
-# ── Convenience wrapper for sync code paths that have no session yet ──────
-
-
 def create_notification_in_new_session(**kwargs) -> None:
-    """Open a fresh sync session, write, and close.
-
-    Useful when the caller is sync but the surrounding session may be
-    in a poisoned state (e.g. inside an except branch after a rollback).
-    """
     try:
         with SessionLocal() as session:
             create_notification(session, **kwargs)

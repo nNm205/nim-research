@@ -1,18 +1,6 @@
-"""Notifications API.
-
-Endpoints (all scoped to the current user via ``get_current_user``):
-
-  GET    /notifications                      — list + unread count
-  POST   /notifications/mark-read            — mark some/all as read
-  DELETE /notifications/{id}                 — delete one
-  DELETE /notifications                      — clear all
-"""
-
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
-
 from app.database.session import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -28,7 +16,6 @@ from app.services.notification_service import (
 )
 
 router = APIRouter(prefix="/api/v1/notifications", tags=["Notifications"])
-
 
 @router.get("", response_model=NotificationListResponse)
 def get_notifications(
@@ -52,11 +39,6 @@ def mark_notifications_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Mark some or all unread notifications as read.
-
-    Body is optional. When ``ids`` is provided, only those are marked.
-    Otherwise every unread notification belonging to the user is marked.
-    """
     affected = mark_read(
         db,
         user_id=current_user.id,

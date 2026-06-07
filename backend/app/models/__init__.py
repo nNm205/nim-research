@@ -1,9 +1,3 @@
-"""SQLAlchemy ORM model re-exports.
-
-Importing this module triggers ``Base.metadata`` registration for every
-table — alembic's ``env.py`` relies on that side effect for autogenerate.
-"""
-
 from app.models.analysis import DocumentAnalysis
 from app.models.chunk_embedding import ChunkEmbedding
 from app.models.document import Document

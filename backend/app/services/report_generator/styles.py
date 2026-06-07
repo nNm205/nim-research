@@ -1,13 +1,3 @@
-"""HTML / CSS theme for generated reports.
-
-Single shared stylesheet so every report — regardless of report_type — looks
-like part of the same product. Tuned to match the FE's slate / teal palette
-so the in-browser preview blends with the rest of the app.
-
-The HTML is fully self-contained (inline CSS) so it stays presentable when
-exported / downloaded / emailed without any external assets.
-"""
-
 REPORT_CSS = """
 :root {
     --color-text: #0f172a;

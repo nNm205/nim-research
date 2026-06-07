@@ -1,5 +1,3 @@
-"""Schemas for the QualityAssuranceAgent endpoints."""
-
 from datetime import datetime
 from uuid import UUID
 
@@ -7,7 +5,6 @@ from pydantic import BaseModel, ConfigDict
 
 
 class QAStartRequest(BaseModel):
-    """Optional LLM overrides for a QA run."""
     llm_provider: str | None = None
     llm_model: str | None = None
 

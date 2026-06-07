@@ -1,26 +1,3 @@
-"""SemanticScholarTool — wraps the Semantic Scholar Graph API.
-
-Rate-limit policy (per Semantic Scholar's docs):
-
-    1 request per second, cumulative across all endpoints. This means that
-    in a given second you may send only 1 request to our system and expect
-    a successful response.
-
-We enforce this with a module-level async lock + monotonic timestamp so the
-tool can be safely called from multiple parallel pipelines (e.g. the
-research agent kicks off arXiv + Scholar + Semantic Scholar in parallel
-via ``asyncio.gather`` — without this lock the Semantic Scholar request
-would race with itself if two agents start within the same second).
-
-When the API still returns 429 — which happens occasionally during traffic
-bursts even with the lock in place — we honour the ``Retry-After`` header
-and otherwise back off exponentially.
-
-The API key is read from ``settings.SEMANTIC_API_KEY`` and sent in the
-``x-api-key`` header. With a key the rate is 1 RPS; without one it's much
-lower (≈ 100 / 5 minutes / IP), so the key is strongly recommended.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -35,31 +12,18 @@ from app.tools.search.schemas.search_result import SearchDocument
 from app.utils.constants import SearchSource, SearchType
 from app.utils.logger import logger
 
-
-# ── Rate limiter (module-level, shared across all instances) ─────────────────
-
-# Keep a tiny safety margin above 1 s to account for clock skew and minor
-# jitter between client and server timing.
 _MIN_INTERVAL_S = 1.05
 _rate_lock = asyncio.Lock()
 _last_request_at: float = 0.0  # monotonic clock seconds
 
 
 async def _wait_for_rate_slot() -> None:
-    """Block until at least ``_MIN_INTERVAL_S`` has passed since the last
-    Semantic Scholar request (cumulative across all endpoints).
-
-    Must be called inside ``_rate_lock``.
-    """
     global _last_request_at
     now = time.monotonic()
     elapsed = now - _last_request_at
     if elapsed < _MIN_INTERVAL_S:
         await asyncio.sleep(_MIN_INTERVAL_S - elapsed)
     _last_request_at = time.monotonic()
-
-
-# ── Tool ─────────────────────────────────────────────────────────────────────
 
 class SemanticScholarTool(BaseSearchTool):
     BASE_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -75,7 +39,6 @@ class SemanticScholarTool(BaseSearchTool):
         "openAccessPdf",
     ])
 
-    # Retry config — 4 attempts spaced by exponential backoff, capped at 8 s.
     _MAX_ATTEMPTS = 4
     _BACKOFF_BASE_S = 1.5
     _BACKOFF_CAP_S = 8.0
@@ -120,26 +83,14 @@ class SemanticScholarTool(BaseSearchTool):
 
         return self._parse_response(data)
 
-    # ── HTTP layer ──────────────────────────────────────────────────────────
-
     async def _request_with_retries(
         self,
         *,
         params: dict,
         headers: dict,
     ) -> dict | None:
-        """Single API call gated by the global 1 RPS lock + retries on 429.
-
-        Returns the decoded JSON body, or ``None`` if the call failed
-        permanently (we deliberately swallow exceptions so a failed
-        Semantic Scholar lookup doesn't take down the whole research
-        session — the other search tools still produce results).
-        """
         async with httpx.AsyncClient(timeout=30) as client:
             for attempt in range(self._MAX_ATTEMPTS):
-                # Hold the global lock across the wait + the request itself
-                # so two coroutines can never fire two requests inside the
-                # same 1-second window.
                 async with _rate_lock:
                     await _wait_for_rate_slot()
                     try:

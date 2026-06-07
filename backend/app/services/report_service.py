@@ -1,27 +1,7 @@
-"""Report service.
-
-Two responsibilities:
-
-1. **CRUD** for ``Report`` rows (create / list / get / update / delete /
-   archive / publish).
-2. **Generation** — wire the deterministic
-   :mod:`app.services.report_generator` pipeline into the report
-   lifecycle so a freshly-created report immediately has Markdown +
-   styled HTML content the FE can display.
-
-Generation is intentionally synchronous because the pipeline is pure
-in-memory aggregation over data the AnalysisAgent already persisted.
-A typical project (10 documents, 8 analyses) generates in well under a
-second; there's no benefit to pushing it onto a background task and
-forcing the FE into a polling loop.
-"""
-
 from uuid import UUID
-
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, defer
-
 from app.models.project import Project
 from app.models.report import Report
 from app.schemas.report import ReportCreate, ReportUpdate
@@ -32,23 +12,10 @@ from app.utils.logger import logger
 
 
 def _render_user_markdown_to_html(markdown_text: str, title: str) -> str:
-    """Convert user-edited Markdown into themed HTML.
-
-    The deterministic generator already produces HTML directly. This helper
-    is only used when the user types raw Markdown into the edit form — the
-    backend then needs to render that prose into HTML so the preview pane
-    (which displays ``html_content``) reflects the edit instead of showing
-    a stale cached version.
-
-    We use ``markdown-it-py`` (already a transitive dep via ``rich``)
-    because it's CommonMark-correct and supports tables, which the user is
-    likely to keep when editing template-generated reports.
-    """
     if not markdown_text or not markdown_text.strip():
         return wrap_html(title or "Báo cáo", "")
 
     try:
-        # Lazy import — keeps module-import cost down for hot CRUD paths.
         from markdown_it import MarkdownIt
 
         md = (
@@ -72,14 +39,6 @@ def _generate_and_attach(
     project: Project,
     report: Report,
 ) -> None:
-    """Run the generator and write ``content`` / ``html_content`` onto
-    the report row.
-
-    Generation failures are NEVER propagated to the caller — a missing
-    ``content`` should not block report creation. The user can always
-    regenerate from the UI later. We log the failure so the developer
-    can diagnose it.
-    """
     try:
         included = (
             [UUID(str(x)) for x in (report.included_documents or [])]
@@ -125,13 +84,6 @@ def create_report(
         )
 
     try:
-        # JSONB needs JSON-serializable values. Pydantic gives us a list
-        # of ``UUID`` objects, but psycopg2's default JSON encoder doesn't
-        # know how to handle ``uuid.UUID`` and raises
-        # ``TypeError: Object of type UUID is not JSON serializable``.
-        # Coerce to strings here so the column round-trips cleanly. The
-        # reverse conversion (str → UUID) happens automatically when the
-        # ``ReportResponse`` schema is built.
         included_documents = (
             [str(doc_id) for doc_id in report_data.included_documents]
             if report_data.included_documents
@@ -147,10 +99,8 @@ def create_report(
         )
 
         db.add(report)
-        db.flush()  # populate report.id without committing yet
+        db.flush()
 
-        # Build initial content from analyses + documents already in the
-        # project. Failures are absorbed inside ``_generate_and_attach``.
         _generate_and_attach(db, project, report)
 
         db.commit()
@@ -158,9 +108,6 @@ def create_report(
 
         logger.success(f"Report created successfully: {report.id}")
 
-        # Best-effort persistent notification so the user sees the
-        # outcome from any page (the create endpoint is sync, so the
-        # write is cheap and we wait for it).
         try:
             from app.services.notification_service import (
                 CATEGORY_REPORT,
@@ -202,12 +149,6 @@ def regenerate_report_content(
     db: Session,
     report: Report,
 ) -> Report:
-    """Re-run the generator and overwrite ``content`` / ``html_content``.
-
-    Used by the explicit "Regenerate" button on the report detail page —
-    handy after the user has run new analyses and wants the report to
-    pick up the fresh data.
-    """
     logger.info(f"Regenerating content for report: {report.id}")
 
     project = db.scalar(
@@ -277,12 +218,6 @@ def get_project_reports(
     limit: int = 50,
     skip: int = 0,
 ) -> list[Report]:
-    """List reports for a project — list-view columns only.
-
-    ``content`` and ``html_content`` (TEXT, often hundreds of KB) are
-    deferred so the list payload stays metadata-only. The detail endpoint
-    fetches the full report on demand.
-    """
     logger.info(f"Fetching reports for project: {project_id}")
 
     try:
@@ -321,19 +256,6 @@ def update_report(
     logger.info(f"Updating report: {report.id}")
 
     update_dict = update_data.model_dump(exclude_unset=True)
-
-    # ── Decide what to do with the report body ───────────────────────────
-    # Three signals from the patch:
-    #   - structural_changed  → rebuild from project data via the generator
-    #   - content_supplied    → user hand-typed markdown; we re-render HTML
-    #                           from it so the FE preview reflects the edit
-    #   - html_supplied       → user hand-typed HTML; we trust it as-is and
-    #                           do NOT auto-derive markdown from it
-    #
-    # Without this logic, a save that only touches ``content`` leaves the
-    # cached ``html_content`` untouched and the preview shows the stale
-    # auto-generated HTML — which is what the user reported as "không
-    # thấy thay đổi gì".
     structural_fields = {"title", "report_type", "included_documents"}
     structural_changed = any(k in update_dict for k in structural_fields)
     content_supplied = "content" in update_dict
@@ -343,25 +265,11 @@ def update_report(
         for key, value in update_dict.items():
             if hasattr(value, "value"):
                 value = value.value
-            # JSONB serialization quirk: ``included_documents`` arrives
-            # from pydantic as ``list[UUID]``, but psycopg2's default
-            # JSON encoder can't serialize ``uuid.UUID``. Coerce to
-            # strings so the column round-trips cleanly. (We do the
-            # same in ``create_report``.)
+           
             if key == "included_documents" and value is not None:
                 value = [str(x) for x in value]
             setattr(report, key, value)
 
-        # Regeneration policy:
-        #   1. If the user explicitly sent ``content`` or ``html_content``,
-        #      they want a hand-edited body — never overwrite from data.
-        #      But re-render the *other* representation so both stay in
-        #      sync (FE preview reads ``html_content``).
-        #   2. If only structural fields changed, regenerate from the
-        #      project data so the report reflects the new title / type
-        #      / document subset.
-        #   3. If only metadata (status / archive / publish) changed,
-        #      leave the body alone.
         if content_supplied and not html_supplied:
             report.html_content = _render_user_markdown_to_html(
                 report.content or "", report.title
@@ -452,8 +360,5 @@ def delete_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         )
-
-
-# ── Constants re-exported for routes ────────────────────────────────────────
 
 VALID_REPORT_TYPES = {t.value for t in ReportType}

@@ -9,9 +9,6 @@ from app.utils.logger import logger
 from app.utils.constants import KnowledgeBaseArticleStatus, KnowledgeBaseSubmissionStatus
 from datetime import datetime, timezone
 
-
-# Loader option used by every list-view query so the FE only receives the
-# minimal User columns needed for ``UserInfo``.
 _USER_INFO_COLUMNS = (User.id, User.full_name, User.email)
 
 def create_article(
@@ -54,9 +51,6 @@ def get_article_by_id(
     db: Session,
     article_id: UUID,
 ) -> KnowledgeBaseArticle:
-    """Detail fetch: includes full ``content`` + creator info via explicit
-    selectinload (only the User columns we actually surface).
-    """
     logger.info(f"Fetching article: {article_id}")
 
     article = db.scalar(

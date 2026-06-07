@@ -1,32 +1,10 @@
-"""QualityAssuranceAgent — verify a Report's quality.
-
-Pipeline (sequential, no LangGraph — simple linear flow):
-
-  1. load context           — load Report + Project + analyses (for fact-check)
-  2. check_format           — deterministic markdown / structure validation
-  3. check_citations        — deterministic citation cross-checks
-  4. check_facts            — 1 LLM call: sample claims → verdicts
-  5. check_grammar          — 1 LLM call: grammar / clarity issues
-  6. compute_score          — weighted overall score + verdict + recommendations
-  7. persist                — write to ``Report.qa_report``
-
-Total LLM calls per QA run ≈ 2.
-
-The agent runs against the SAME ``Report.content`` whether it was produced
-by the deterministic generator or the SynthesisAgent — both produce
-markdown the QA tools can validate.
-"""
-
 from __future__ import annotations
-
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
-
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
-
 from app.agents.tools.qa import (
     CitationVerifierTool,
     FactCheckerTool,
@@ -54,13 +32,9 @@ from app.models.report import Report
 from app.utils.constants import QAStatus
 from app.utils.logger import logger
 
-
 __all__ = ["QualityAssuranceAgent"]
 
-
 class QualityAssuranceAgent:
-    """Run the QA pipeline for a single Report."""
-
     def __init__(
         self,
         db: AsyncSession,
@@ -71,8 +45,6 @@ class QualityAssuranceAgent:
         self.llm_provider = (llm_provider or settings.PROVIDER).lower()
         self.llm_model = llm_model or settings.MODEL_NAME
 
-    # ── Public entry point ──────────────────────────────────────────────
-
     async def run(self, report_id: UUID) -> Report:
         report = await self._get_report(report_id)
         progress = QAProgressTracker(self.db, report_id)
@@ -81,7 +53,6 @@ class QualityAssuranceAgent:
             try:
                 await self._mark_running(report)
             except RuntimeError:
-                # Already running — caller skip silently
                 return report
 
             try:
@@ -104,7 +75,6 @@ class QualityAssuranceAgent:
                 model=llm.get_model_name(),
             )
 
-            # ── 1. Load context ─────────────────────────────────────────
             await progress.start_step(STEP_LOAD)
             project = await self._get_project(report.project_id)
             included = None
@@ -127,7 +97,6 @@ class QualityAssuranceAgent:
                 f"{len(context.documents)} tài liệu, {len(markdown)} ký tự",
             )
 
-            # ── 2. Format ───────────────────────────────────────────────
             await progress.start_step(STEP_FORMAT)
             format_tool = FormatValidatorTool()
             format_result = format_tool.validate(markdown)
@@ -137,17 +106,10 @@ class QualityAssuranceAgent:
                 f"{len(format_result.get('issues') or [])} issue",
             )
 
-            # ── 3. Citations ────────────────────────────────────────────
             await progress.start_step(STEP_CITATIONS)
             citation_entries = self._citation_entries_from_report(
                 report, context
             )
-            # The verifier is strict about inline `[n]` markers only when
-            # the report was synthesised by the LLM — template reports
-            # don't emit inline citations by design and shouldn't be
-            # penalised for missing them. We flag the report as
-            # "synthesised" if synthesis has completed AND wrote a
-            # citations payload into ``synthesis_metadata``.
             expects_inline = bool(
                 (report.synthesis_metadata or {}).get("citation_entries")
             )
@@ -163,7 +125,6 @@ class QualityAssuranceAgent:
                 f"{len(citations_result.get('issues') or [])} issue",
             )
 
-            # ── 4. Facts ────────────────────────────────────────────────
             await progress.start_step(STEP_FACTS)
             fact_tool = FactCheckerTool()
             facts_result = await fact_tool.check(
@@ -178,7 +139,6 @@ class QualityAssuranceAgent:
                 f"checked {(facts_result.get('stats') or {}).get('claims_checked', 0)} claim",
             )
 
-            # ── 5. Grammar ──────────────────────────────────────────────
             await progress.start_step(STEP_GRAMMAR)
             grammar_tool = GrammarCheckerTool()
             grammar_result = await grammar_tool.check(
@@ -192,7 +152,6 @@ class QualityAssuranceAgent:
                 f"{(grammar_result.get('stats') or {}).get('issues_count', 0)} issue",
             )
 
-            # ── 6. Score ────────────────────────────────────────────────
             await progress.start_step(STEP_SCORE)
             scorer = QualityScorerTool()
             qa_report = scorer.score(
@@ -209,7 +168,6 @@ class QualityAssuranceAgent:
                 f"overall={qa_report['overall_score']} ({qa_report['verdict']})",
             )
 
-            # ── 7. Persist ──────────────────────────────────────────────
             try:
                 await progress.start_step(STEP_PERSIST)
                 await self._persist_result(report, qa_report)
@@ -252,8 +210,6 @@ class QualityAssuranceAgent:
             raise
 
         return report
-
-    # ── DB helpers ──────────────────────────────────────────────────────
 
     async def _get_report(self, report_id: UUID) -> Report:
         result = await self.db.execute(
@@ -325,22 +281,16 @@ class QualityAssuranceAgent:
         await self.db.commit()
         await self.db.refresh(report)
 
-    # ── Citation entry resolution ───────────────────────────────────────
-
     def _citation_entries_from_report(
         self,
         report: Report,
         context: Any,
     ) -> list[dict]:
-        """Pull citation entries from synthesis_metadata when available;
-        otherwise build a minimal list from the project documents so the
-        verifier still has something to cross-check against."""
         meta = report.synthesis_metadata or {}
         entries = meta.get("citation_entries") if isinstance(meta, dict) else None
         if isinstance(entries, list) and entries:
             return entries
 
-        # Fallback: derive a thin entry list from context.documents
         out: list[dict] = []
         for d in context.documents:
             out.append({
@@ -352,8 +302,6 @@ class QualityAssuranceAgent:
                 "authors": d.authors,
             })
         return out
-
-    # ── Notifications ───────────────────────────────────────────────────
 
     async def _notify(
         self,

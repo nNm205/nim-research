@@ -33,11 +33,6 @@ class SearchToolFactory:
     
     @staticmethod
     def get_default_tools():
-        # Default = academic-only sources. Generic Google web search adds a
-        # lot of noise (blog posts, marketing pages, irrelevant Wikipedia
-        # entries) when the query is a short token like a model name. Users
-        # can still opt into web search by passing ``sources`` explicitly
-        # to ``SearchService.search()``.
         return SearchToolFactory.get_tools([
             SearchSource.ARXIV,
             SearchSource.GOOGLE_SCHOLAR,

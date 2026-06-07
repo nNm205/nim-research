@@ -1,18 +1,13 @@
-"""QA service — dispatch + status helpers for the QualityAssuranceAgent."""
-
 import asyncio
 from uuid import UUID
-
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.agents.qa_agent import QualityAssuranceAgent
 from app.database.session import AsyncSessionLocal
 from app.models.report import Report
 from app.utils.constants import QAStatus
 from app.utils.logger import logger
-
 
 async def get_report_async(
     db: AsyncSession, report_id: UUID
@@ -35,10 +30,6 @@ async def mark_report_qa_pending(
     await db.refresh(report)
     return report
 
-
-# ── Background dispatch ─────────────────────────────────────────────────
-
-
 async def _run_agent_in_background(
     report_id: UUID,
     llm_provider: str | None = None,
@@ -49,7 +40,6 @@ async def _run_agent_in_background(
     try:
         async with AsyncSessionLocal() as db:
             if run_synthesis_first:
-                # Chained run: synthesise first, then QA.
                 from app.agents.synthesis_agent import SynthesisAgent
                 synthesis = SynthesisAgent(
                     db,
@@ -74,7 +64,6 @@ async def _run_agent_in_background(
 
 
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
-
 
 def dispatch_qa_agent(
     report_id: UUID,

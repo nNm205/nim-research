@@ -1,21 +1,3 @@
-"""Prompt templates for the AnalysisAgent pipeline.
-
-All prompts live here so they can be tuned, A/B tested, and audited in one place.
-Each constant pair (`*_SYSTEM` / `*_USER`) is consumed by exactly one tool.
-
-Temperature recommendations live next to each block. Tools are responsible for
-passing the right temperature to the LLM.
-"""
-
-# ---------------------------------------------------------------------------
-# 1. Section Insight (1 LLM call per section, the core of the pipeline)
-# Temperature: 0.2  Max tokens: ~4000
-# Output: JSON object matching the SectionInsight schema
-#
-# Note: outline-building is now deterministic (no LLM call). See
-# app/agents/tools/analysis/outline_builder.py.
-# ---------------------------------------------------------------------------
-
 SECTION_INSIGHT_SYSTEM_PROMPT = """You are an expert research analyst. You are
 analysing ONE section of a larger document. Your job is to extract grounded,
 specific insights, not generic summaries.
@@ -129,15 +111,6 @@ Section text (chunks labelled):
 {section_text}
 
 Return the JSON insight object."""
-
-
-# ---------------------------------------------------------------------------
-# 3. Cross-section synthesis (1 LLM call after all sections are analysed).
-# Produces both the narrative synthesis AND the executive summary in one
-# shot to save quota.
-# Temperature: 0.3  Max tokens: ~2000
-# Output: JSON object describing how the sections cohere
-# ---------------------------------------------------------------------------
 
 CROSS_SYNTHESIS_SYSTEM_PROMPT = """You are a senior research analyst writing
 the synthesis layer over per-section insights. The document has been analysed

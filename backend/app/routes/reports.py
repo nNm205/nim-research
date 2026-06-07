@@ -1,29 +1,9 @@
-"""Report endpoints.
-
-Endpoints:
-
-  POST   /projects/{project_id}/reports                — create + auto-generate
-  GET    /projects/{project_id}/reports                — list (metadata only)
-  GET    /reports/{report_id}                          — full detail (HTML/MD)
-  PUT    /reports/{report_id}                          — edit (auto-regen on
-                                                         structural changes)
-  DELETE /reports/{report_id}                          — delete
-  POST   /reports/{report_id}/regenerate               — re-run the generator
-  GET    /reports/{report_id}/download/{format}        — md / html / docx
-                                                         (returns a file)
-
-The legacy ``POST /reports/{id}/export`` endpoint is preserved as a
-deprecated shim that just redirects callers to the download endpoint.
-"""
-
 import re
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
 from app.database.session import get_db
 from app.dependencies import get_current_user
 from app.models.project import Project
@@ -47,28 +27,13 @@ from app.services.report_service import (
 
 router = APIRouter(prefix="/api/v1", tags=["Reports"])
 
-
-# ── helpers ─────────────────────────────────────────────────────────────────
-
-
 def _safe_filename(title: str, *, ext: str) -> str:
-    """Convert a free-text title into something safe for ``Content-Disposition``.
-
-    Strips characters that are invalid on Windows / macOS / common HTTP
-    parsers, collapses whitespace, and truncates to a sane length so we
-    don't blow past header size limits.
-    """
     base = (title or "report").strip()
-    # Replace path separators / control chars / Windows-illegal chars
     base = re.sub(r'[\\/:*?"<>|\r\n\t]+', " ", base)
     base = re.sub(r"\s+", "_", base).strip("._")
     if not base:
         base = "report"
     return f"{base[:80]}.{ext}"
-
-
-# ── CRUD endpoints ──────────────────────────────────────────────────────────
-
 
 @router.post(
     "/projects/{project_id}/reports",
@@ -156,10 +121,6 @@ def delete_existing_report(
     delete_report(db=db, report=report)
     return None
 
-
-# ── Generation / export ─────────────────────────────────────────────────────
-
-
 @router.post(
     "/reports/{report_id}/regenerate",
     response_model=ReportResponse,
@@ -169,12 +130,6 @@ def regenerate_existing_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Re-run the deterministic generator and overwrite report content.
-
-    Useful when fresh analyses have been completed since the report
-    was first generated and the user wants the report to pick up the
-    new data.
-    """
     report = get_report_by_id(db=db, report_id=report_id)
     verify_project_ownership(
         db=db, project_id=report.project_id, user_id=current_user.id
@@ -191,10 +146,6 @@ def export_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Deprecated — kept for backwards compatibility with older FE builds.
-
-    Use ``GET /reports/{report_id}/download/{format}`` instead.
-    """
     report = get_report_by_id(db=db, report_id=report_id)
     verify_project_ownership(
         db=db, project_id=report.project_id, user_id=current_user.id
@@ -222,14 +173,6 @@ def download_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Download the report as ``.md``, ``.html``, or ``.docx``.
-
-    For ``md`` / ``html`` we return the cached content stored on the
-    report row (regenerating it on the fly if it's missing). For
-    ``docx`` we render a fresh Word document from the project data via
-    :func:`generate_report_docx` — that function reads the analyses + 
-    documents directly so it always reflects the latest data.
-    """
     fmt = format.lower()
     if fmt not in _FORMAT_MIME:
         raise HTTPException(
@@ -250,7 +193,6 @@ def download_report(
     if fmt == "md":
         content = report.content
         if not content:
-            # Cache miss — regenerate inline and persist for next time.
             report = regenerate_report_content(db=db, report=report)
             content = report.content or ""
         return Response(
@@ -270,7 +212,6 @@ def download_report(
             headers=headers,
         )
 
-    # fmt == "docx"
     project = db.scalar(
         select(Project).where(Project.id == report.project_id)
     )

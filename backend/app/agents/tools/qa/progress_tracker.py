@@ -1,23 +1,12 @@
-"""QAProgressTracker — write QualityAssuranceAgent progress to ``reports.qa_progress``.
-
-Mirrors the synthesis tracker so the FE renders both pipelines consistently.
-"""
-
 from __future__ import annotations
-
 import time
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
-
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.report import Report
 from app.utils.logger import logger
-
-
-# ── Canonical step keys ─────────────────────────────────────────────────────
 
 STEP_LOAD = "load_report"
 STEP_FORMAT = "check_format"
@@ -41,8 +30,6 @@ _MAX_EVENTS = 30
 
 
 class QAProgressTracker:
-    """Persist QualityAssuranceAgent progress into ``reports.qa_progress``."""
-
     def __init__(self, db: AsyncSession, report_id: UUID) -> None:
         self.db = db
         self.report_id = report_id
@@ -130,8 +117,6 @@ class QAProgressTracker:
                 level="error",
             )
         await self._flush()
-
-    # ── Internals ───────────────────────────────────────────────────────
 
     def _label_for(self, key: str) -> str:
         for s in CANONICAL_STEPS:

@@ -1,28 +1,16 @@
-"""GroqProvider — chat completions via the OpenAI-compatible Groq API.
-
-Adds 429 retry handling for parity with the Gemini provider, since Groq's
-free tier still has per-minute limits that the Analysis pipeline can hit
-when running many parallel section-insight calls.
-"""
-
 from __future__ import annotations
-
 import asyncio
 import re
 from typing import Any, Dict, List, Optional
-
 import httpx
 import requests
-
 from app.config import settings
 from app.models.llm_providers.base import LLMProvider
 from app.utils.logger import logger
 
-
 _DEFAULT_TIMEOUT = 60.0
 _MAX_RETRIES_429 = 3
 _RETRY_BACKOFF_FALLBACK_S = 8.0
-
 
 class GroqProvider(LLMProvider):
     def __init__(
@@ -57,8 +45,7 @@ class GroqProvider(LLMProvider):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        # Groq supports OpenAI-style structured response_format. The Analysis
-        # pipeline passes response_format="json" — translate to the API shape.
+        
         if kwargs.get("response_format") == "json":
             payload["response_format"] = {"type": "json_object"}
 
@@ -99,8 +86,6 @@ class GroqProvider(LLMProvider):
     def get_model_name(self) -> str:
         return self.model
 
-    # ── Internals ───────────────────────────────────────────────────────────
-
     async def _call(self, payload: dict) -> str:
         url = f"{self.base_url}/chat/completions"
         attempt = 0
@@ -133,9 +118,6 @@ class GroqProvider(LLMProvider):
 
     @staticmethod
     def _retry_delay_seconds(response: httpx.Response) -> float:
-        """Honour `Retry-After` header or the `Please try again in 12.345s`
-        message Groq returns in 429 bodies. Falls back to a constant backoff."""
-        # Standard HTTP header
         retry_after = response.headers.get("Retry-After") or response.headers.get(
             "retry-after"
         )
@@ -145,7 +127,6 @@ class GroqProvider(LLMProvider):
             except ValueError:
                 pass
 
-        # Groq-specific: the JSON body contains a "Please try again in 12.345s"
         try:
             body = response.json()
         except Exception:

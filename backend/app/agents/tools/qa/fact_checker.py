@@ -1,32 +1,13 @@
-"""FactCheckerTool — sample report claims and verify against analysis evidence.
-
-Strategy:
-  1. Extract candidate claims from the report markdown. We look for sentences
-     that include `[n]` citations OR a numeric/percentage pattern (likely
-     factual). Cap the sample to keep LLM cost bounded.
-  2. For each claim, gather the evidence digest of the cited documents from
-     the SynthesisContext (or from the analyses directly).
-  3. One LLM call returns per-claim verdicts (supported / partial /
-     unsupported).
-
-If the report has no citations and no analyzed documents we skip the LLM
-call and return a neutral score with a note.
-"""
-
 from __future__ import annotations
-
 import json
 import re
 from dataclasses import dataclass
 from typing import Any
-
 from app.agents.tools.analysis.json_utils import parse_llm_json
 from app.agents.tools.synthesis.context_loader import SynthesisContext
 from app.prompts.qa import FACT_CHECK_SYSTEM_PROMPT, FACT_CHECK_USER_PROMPT
 from app.utils.logger import logger
 
-
-# Caps to bound LLM cost.
 _MAX_CLAIMS_TO_CHECK = 12
 _MIN_CLAIM_CHARS = 30
 _MAX_CLAIM_CHARS = 400
@@ -35,12 +16,6 @@ _MAX_EVIDENCE_TOTAL_CHARS = 12_000
 
 
 _INLINE_CITATION_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
-# Sentence terminator regex tolerant of VN/EN punctuation. We split on:
-#   • ``.``/``?``/``!`` followed by space + capital letter (ordinary
-#     prose sentence boundary)
-#   • blank line(s) — paragraph break is a hard sentence boundary too,
-#     so a heading + paragraph never get glued
-#   • newline preceding an ordered-list / bullet marker — same reason
 _SENTENCE_SPLIT_RE = re.compile(
     r"(?<=[\.\?!])\s+(?=[A-ZĐĂÂÊÔƠƯ])"
     r"|\n[ \t]*\n+"
@@ -56,8 +31,6 @@ class _Candidate:
 
 
 class FactCheckerTool:
-    """Sample factual claims from the report and check them with the LLM."""
-
     async def check(
         self,
         markdown: str,
@@ -83,8 +56,6 @@ class FactCheckerTool:
 
         evidence = self._build_evidence(candidates, context)
         if not evidence and not _any_cited(candidates):
-            # No citations and no evidence available — can't verify, but
-            # don't penalise heavily. Return a neutral score with a flag.
             return {
                 "score": 70,
                 "issues": [{
@@ -130,14 +101,11 @@ class FactCheckerTool:
 
         return self._normalise(parsed, candidates)
 
-    # ── Helpers ─────────────────────────────────────────────────────────
-
     def _build_evidence(
         self,
         candidates: list[_Candidate],
         context: SynthesisContext | None,
     ) -> dict[int, dict]:
-        """Return {doc_index: digest_dict} for every cited document."""
         if context is None:
             return {}
         cited_set: set[int] = set()
@@ -156,7 +124,6 @@ class FactCheckerTool:
             digest = d.to_digest_dict()
             digest_str = json.dumps(digest, ensure_ascii=False)
             if len(digest_str) > _MAX_EVIDENCE_CHARS_PER_DOC:
-                # Trim long fields proportionally — drop low-priority keys
                 for k in ("topics", "quotes", "research_questions"):
                     digest.pop(k, None)
                 digest_str = json.dumps(digest, ensure_ascii=False)
@@ -203,7 +170,6 @@ class FactCheckerTool:
                 "evidence_excerpt": (v.get("evidence_excerpt") or "").strip()[:300],
             })
 
-        # Anything the LLM didn't verdict counts as "partial" (uncertain)
         verdicted = {d["index"] for d in details}
         for cand in candidates:
             if cand.index not in verdicted:
@@ -217,12 +183,6 @@ class FactCheckerTool:
                     "evidence_excerpt": "",
                 })
 
-        # Soften "unsupported" for claims that didn't cite anything in
-        # the first place. Template reports list metrics without inline
-        # citations and shouldn't be punished — the LLM may correctly
-        # flag those as "unsupported by cited evidence" but that just
-        # means there's nothing to compare against, not that the metric
-        # is wrong. We rebucket those as "partial" before scoring.
         rebucketed_unsupported = 0
         for d in details:
             if d["verdict"] == "unsupported" and not d["cited_docs"]:
@@ -237,14 +197,9 @@ class FactCheckerTool:
             counts["partial"] += rebucketed_unsupported
 
         total = sum(counts.values()) or 1
-        # Score: 100 * supported_ratio + 50 * partial_ratio
         ratio = (counts["supported"] + 0.5 * counts["partial"]) / total
         score = int(round(ratio * 100))
 
-        # If EVERY candidate ended up "partial" we know the agent simply
-        # had nothing to verify against (no cites + no analysis evidence).
-        # Floor the score at 70 so the QA verdict still reflects "needs
-        # review" rather than dropping into "poor".
         if counts["supported"] == 0 and counts["unsupported"] == 0 and counts["partial"] > 0:
             score = max(score, 70)
 
@@ -280,7 +235,6 @@ class FactCheckerTool:
         }
 
     def _fallback(self, candidates: list[_Candidate]) -> dict[str, Any]:
-        """When the LLM call fails, return a neutral 70 score with a note."""
         return {
             "score": 70,
             "issues": [{
@@ -297,32 +251,17 @@ class FactCheckerTool:
             "details": [],
         }
 
-
-# ── Static helpers ──────────────────────────────────────────────────────
-
-
 def _extract_claims(markdown: str) -> list[_Candidate]:
-    """Pull a bounded sample of factual-looking sentences.
-
-    A sentence is a claim candidate if it cites a document via ``[n]``
-    OR contains a numeric metric (BLEU 28.4, 92%, n=1024, ...). Pure
-    narrative without either is skipped — too vague to fact-check.
-    """
     if not markdown:
         return []
 
-    # Drop code blocks, BibTeX, and reference list
     cleaned = _strip_noise(markdown)
     sentences = _SENTENCE_SPLIT_RE.split(cleaned)
 
     out: list[_Candidate] = []
     for raw in sentences:
         s = raw.strip()
-        # Strip leading list markers (markdown bullet/numbered prefixes).
         s = _LIST_PREFIX_RE.sub("", s).strip()
-        # Trim a stranded list-number tail like "...cho dịch máy 2." that
-        # the splitter leaves behind when an ordered-list item butts up
-        # against the next item.
         s = _TRAILING_LIST_NUM_RE.sub("", s).strip()
 
         if len(s) < _MIN_CLAIM_CHARS or len(s) > _MAX_CLAIM_CHARS:
@@ -344,16 +283,8 @@ def _extract_claims(markdown: str) -> list[_Candidate]:
             break
     return out
 
-
-# Strip leading list markers like "1. ", "1) ", "- ", "* ", "• "
 _LIST_PREFIX_RE = re.compile(r"^\s*(?:\d+[.)]\s+|[-*•]\s+)")
-
-# Strip a stranded list-number tail like "...cho dịch máy 2." that comes
-# from the splitter not consuming the next list marker.
 _TRAILING_LIST_NUM_RE = re.compile(r"\s+\d+\.\s*$")
-
-# Tighter numeric hint — a bare digit isn't enough; we need at least
-# two digits OR a percent OR a recognised metric label.
 _NUMERIC_HINT_RE = re.compile(
     r"\b\d{2,}(?:[.,]\d+)?\b"
     r"|\b\d+(?:[.,]\d+)?\s*%"
@@ -361,12 +292,8 @@ _NUMERIC_HINT_RE = re.compile(
     r"top-?\d|n=)\s*\d"
 )
 
-
 def _strip_noise(markdown: str) -> str:
-    """Remove fenced code blocks and the references section so we don't
-    treat citation lines as claims."""
     text = re.sub(r"```.*?```", "", markdown, flags=re.DOTALL)
-    # Drop the trailing references / bibtex section if present
     text = re.split(r"\n##\s+(?:Tài liệu tham khảo|References|BibTeX)\s*\n",
                     text, maxsplit=1)[0]
     return text

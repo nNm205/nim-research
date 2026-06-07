@@ -40,11 +40,6 @@ class KnowledgeBaseArticleResponse(BaseModel):
 
 
 class KnowledgeBaseArticleSummary(BaseModel):
-    """Compact article row for list endpoints — drops the full ``content``.
-
-    The KB list page renders title + excerpt + tags + view count. The full
-    Markdown body is only needed when the user opens an article.
-    """
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -67,7 +62,6 @@ class KnowledgeBaseArticleListResponse(BaseModel):
     total: int
     categories: dict[str, int]
 
-# Submission schemas
 class KnowledgeBaseSubmissionCreate(BaseModel):
     title: str
     excerpt: str
@@ -95,11 +89,6 @@ class KnowledgeBaseSubmissionResponse(BaseModel):
 
 
 class KnowledgeBaseSubmissionSummary(BaseModel):
-    """Compact submission row for list views — drops full ``content``.
-
-    The pending-submissions list and "my submissions" list render title +
-    excerpt + status + dates. Full body is fetched on detail.
-    """
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID

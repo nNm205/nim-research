@@ -18,21 +18,6 @@ from app.utils.logger import logger
 
 
 class ResearchAgent:
-    """Run a research session end-to-end.
-
-    Stages (with progress published into ``research_sessions.progress``):
-
-      1. Mark session as RUNNING
-      2. STAGE_SEARCH   — call SearchService (parallel multi-source + rerank)
-      3. STAGE_SAVE     — persist SearchResult rows
-      4. Mark session as COMPLETED (or FAILED on error)
-
-    A caller (e.g. ``AutoResearchService``) can pass its own ``tracker`` to
-    chain extra stages (ingest, analyse) into the same session's progress
-    feed. When no tracker is passed we create one in ``simple`` mode so
-    standalone research sessions still get a live stepper on the FE.
-    """
-
     def __init__(
         self,
         db: AsyncSession,
@@ -42,12 +27,7 @@ class ResearchAgent:
         self.db = db
         self.search_service = SearchService()
         self._tracker = tracker
-        # Whether this agent owns the tracker lifecycle (init + finalize).
-        # If a caller passed in a pre-existing tracker, they're responsible
-        # for finalising it after their own additional stages run.
         self._owns_tracker = tracker is None
-
-    # ── Public entry point ──────────────────────────────────────────────────
 
     async def run(self, research_session_id: UUID) -> ResearchSession:
         session = await self._get_session(research_session_id)
@@ -74,12 +54,6 @@ class ResearchAgent:
                 message=f"{len(documents)} kết quả",
             )
 
-            # The "save" stage only fits ordinary search sessions: in the
-            # simple-mode tracker it's the final terminal step. The auto
-            # mode's stage list reserves "save" for the very end of the
-            # whole pipeline (after ingest + analyse), so when we're
-            # nested inside auto-research we must NOT publish a save
-            # stage event here — the orchestrator handles it.
             if self._owns_tracker:
                 await self._tracker.start_stage(
                     STAGE_SAVE,
@@ -88,16 +62,8 @@ class ResearchAgent:
                 await self._save_results(session, documents)
                 await self._tracker.finish_stage(STAGE_SAVE)
             else:
-                # Still persist the results — just do it without the
-                # stage event (auto mode logs this implicitly via the
-                # SEARCH stage's "X kết quả" message).
                 await self._save_results(session, documents)
 
-            # Only mark the session COMPLETED when we own the tracker
-            # — ie when this is a standalone search. When the agent is
-            # invoked as the first stage of auto-research, the
-            # orchestrator above us still has more work to do (ingest +
-            # analyse) and will flip the status itself at the end.
             if self._owns_tracker:
                 await self._mark_completed(session, results_count=len(documents))
                 await self._tracker.finalize(
@@ -108,9 +74,6 @@ class ResearchAgent:
                     session, success=True, count=len(documents)
                 )
             else:
-                # Still record results_count so the FE list shows the
-                # right number even before the parent orchestrator
-                # finishes.
                 session.results_count = len(documents)
                 await self.db.commit()
                 await self.db.refresh(session)
@@ -137,8 +100,6 @@ class ResearchAgent:
             raise
 
         return session
-
-    # ── DB helpers ──────────────────────────────────────────────────────────
 
     async def _get_session(self, research_session_id: UUID) -> ResearchSession:
         result = await self.db.execute(
@@ -180,7 +141,6 @@ class ResearchAgent:
         session: ResearchSession,
         documents: list[SearchDocument],
     ) -> None:
-        """Bulk-insert all SearchResult rows in a single transaction."""
         rows = [
             SearchResult(
                 research_session_id=session.id,
@@ -211,9 +171,6 @@ class ResearchAgent:
             f"for session {session.id}"
         )
 
-
-    # ── Notifications ───────────────────────────────────────────────────────
-
     async def _notify_done(
         self,
         session: ResearchSession,
@@ -222,12 +179,6 @@ class ResearchAgent:
         count: int = 0,
         error: str | None = None,
     ) -> None:
-        """Push a "tìm kiếm xong" notification to the project owner.
-
-        Only called for standalone search sessions. Auto-research mode
-        defers the alert to ``AutoResearchService`` which fires at the
-        end of the full pipeline (search + ingest + analyse).
-        """
         from app.database.session import AsyncSessionLocal as _Session
         from app.models.project import Project
         from app.services.notification_service import (

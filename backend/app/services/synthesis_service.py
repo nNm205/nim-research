@@ -1,10 +1,3 @@
-"""Synthesis service — dispatch + status helpers for the SynthesisAgent.
-
-Mirrors ``analysis_service`` for analyses: the route layer calls
-``dispatch_synthesis_agent`` after marking the report as PENDING; the agent
-runs in the background and persists the result onto the same Report row.
-"""
-
 import asyncio
 from uuid import UUID
 
@@ -33,18 +26,12 @@ async def get_report_async(
 async def mark_report_synthesis_pending(
     db: AsyncSession, report: Report
 ) -> Report:
-    """Flip the report to ``synthesis_status = pending`` so the FE can show
-    a "queued" indicator until the background task actually starts."""
     report.synthesis_status = SynthesisStatus.PENDING.value
     report.synthesis_error = None
     report.synthesis_completed_at = None
     await db.commit()
     await db.refresh(report)
     return report
-
-
-# ── Background dispatch ─────────────────────────────────────────────────
-
 
 async def _run_agent_in_background(
     report_id: UUID,

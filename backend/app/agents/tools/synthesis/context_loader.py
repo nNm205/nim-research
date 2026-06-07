@@ -1,36 +1,17 @@
-"""SynthesisContextLoaderTool — gather Project + Documents + Analyses.
-
-Wraps the existing deterministic ``build_report_context`` aggregator so the
-SynthesisAgent uses the SAME data layer the deterministic generator already
-relies on. We then add a compact LLM-friendly digest derived from the
-``DocumentBlock`` objects.
-
-The loader is async-only (the AnalysisAgent / SynthesisAgent run on async
-sessions). The underlying aggregator is sync, so we run it inside the
-executor only when needed; otherwise we issue equivalent async queries
-directly.
-"""
-
 from __future__ import annotations
-
 import json
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
 from app.models.analysis import DocumentAnalysis
 from app.models.document import Document
 from app.models.project import Project
 from app.utils.constants import AnalysisStatus
 from app.utils.logger import logger
 
-
-# How much of each document's insight we keep in the LLM digest. Tight by
-# default so multi-document reports don't blow the context window.
 _DIGEST_KEY_FINDINGS = 5
 _DIGEST_LIMITATIONS = 3
 _DIGEST_RQ = 3
@@ -41,15 +22,13 @@ _MAX_SUMMARY_CHARS = 800
 
 @dataclass
 class DocumentItem:
-    """A single document + its analysis flattened for the LLM."""
-
-    index: int                      # 1-based citation index
+    index: int                      
     id: UUID
     title: str
     source_url: str | None
     source_type: str | None
     authors: list[str]
-    published_at: str | None        # ISO date string, never raw datetime
+    published_at: str | None       
     doi: str | None
     summary: str | None
     main_thesis: str | None
@@ -64,7 +43,6 @@ class DocumentItem:
     has_analysis: bool = False
 
     def to_digest_dict(self) -> dict[str, Any]:
-        """Compact dict shape sent to the LLM (drops irrelevant fields)."""
         out: dict[str, Any] = {
             "n": self.index,
             "title": self.title,
@@ -97,8 +75,6 @@ class DocumentItem:
 
 @dataclass
 class SynthesisContext:
-    """Everything the SynthesisAgent needs about the report inputs."""
-
     project_id: UUID
     project_name: str
     project_topic: str | None
@@ -114,7 +90,6 @@ class SynthesisContext:
 
     @property
     def documents_digest_json(self) -> str:
-        """JSON blob of the digest — sent into LLM prompts."""
         return json.dumps(
             [d.to_digest_dict() for d in self.documents],
             ensure_ascii=False,
@@ -123,8 +98,6 @@ class SynthesisContext:
 
 
 class SynthesisContextLoaderTool:
-    """Build a ``SynthesisContext`` for a report row."""
-
     async def load(
         self,
         db: AsyncSession,
@@ -166,8 +139,6 @@ class SynthesisContextLoaderTool:
             documents=items,
         )
 
-    # ── Helpers ──────────────────────────────────────────────────────────
-
     def _flatten(
         self,
         index: int,
@@ -175,8 +146,6 @@ class SynthesisContextLoaderTool:
         analysis: DocumentAnalysis | None,
     ) -> DocumentItem:
         meta = document.document_metadata or {}
-        # Authors from document metadata (ingestion may populate this);
-        # fall back to empty list.
         authors = _coerce_authors(meta)
         published = meta.get("published_at") or meta.get("published")
         published_iso: str | None = None
@@ -270,7 +239,6 @@ def _coerce_authors(meta: dict[str, Any]) -> list[str]:
 
 
 def _str_list(value: Any) -> list[str]:
-    """Normalise a JSONB list-like value into list[str]."""
     if not value:
         return []
     out: list[str] = []

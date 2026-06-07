@@ -1,39 +1,11 @@
-"""AnalysisAgent — section-grounded LLM analysis pipeline (LangGraph).
-
-Pipeline:
-  START
-    → load_chunks            (load DocumentChunks + embeddings, no truncation)
-    → map_sections           (group chunks into sections by metadata or headings)
-    → build_outline          (deterministic, 0 LLM calls)
-    → analyse_sections       (parallel SectionInsightTool over each section)
-    → synthesize             (1 LLM call, returns narrative + executive_summary)
-    → rollup_legacy_fields   (rule-based: derive key_findings / methodology /
-                              limitations / future_work / keywords / RQs /
-                              critical_assessment from section insights)
-    → persist                (write to document_analyses)
-  END
-
-Total LLM calls per document = N_sections + 1 (synthesis), where short or
-"trivial" sections (references, acknowledgments, very short) are skipped to
-save more quota. For a typical 7-section paper that means ~6 calls total
-versus the 10+ the original pipeline made.
-
-The agent uses chunk-grounded retrieval: SectionInsightTool sees full chunks
-labelled with [chunk N] so it can cite quotes back to specific chunk indices,
-and the SemanticRetrieverTool is available for future aspect-based deep dives.
-"""
-
 from __future__ import annotations
-
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, TypedDict
 from uuid import UUID
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
-
 from app.agents.tools.analysis import (
     ChunkLoaderTool,
     ChunkRecord,
@@ -67,51 +39,28 @@ __all__ = ["AnalysisAgent", "parse_llm_json"]
 
 
 _MAX_SECTIONS_TO_ANALYSE = 16
-# Conservative — Gemini free tier is 5 RPM. Most other providers tolerate 4-8.
-# Override at runtime via env if you have a paid tier.
 _SECTION_CONCURRENCY = 2
-
-# Cost guard. Sections of these types are pure boilerplate; analysing them
-# burns LLM quota for no insight gain. They get a heuristic-only insight.
 _SKIP_SECTION_TYPES = frozenset({
     "references",
     "acknowledgments",
 })
-
-# Sections shorter than this get a heuristic insight (no LLM call). 500 chars
-# ≈ 100 tokens of substantive text — anything below that is too small to
-# extract claims/methods/data from anyway.
 _MIN_CHARS_FOR_LLM = 500
 
-
-# ---------------------------------------------------------------------------
-# LangGraph state
-# ---------------------------------------------------------------------------
 class AnalysisState(TypedDict, total=False):
-    # Input
     analysis_id: UUID
     document: Document
     db: AsyncSession
     llm: LLMProvider
     progress: "ProgressTracker"
-
-    # Loaded
     chunks: list[ChunkRecord]
     sections: list[MappedSection]
-
-    # Produced
     outline: dict
     section_insights: list[dict]
     narrative_synthesis: dict
     summary: str | None
     legacy_rollup: dict
-
-    # Control
     error: str | None
 
-# ---------------------------------------------------------------------------
-# Nodes
-# ---------------------------------------------------------------------------
 async def _node_load_chunks(state: AnalysisState) -> AnalysisState:
     db: AsyncSession = state["db"]
     document: Document = state["document"]
@@ -124,12 +73,9 @@ async def _node_load_chunks(state: AnalysisState) -> AnalysisState:
     chunks = await loader.load(db, document.id)
 
     if not chunks and document.content:
-        # Fallback for legacy documents that only have document.content but
-        # no DocumentChunks. Wrap the full content as a single synthetic chunk
-        # so the rest of the pipeline can still operate.
         chunks = [
             ChunkRecord(
-                id=document.id,  # not a real chunk id; never persisted
+                id=document.id,  
                 chunk_index=0,
                 content=document.content,
                 metadata={},
@@ -211,11 +157,6 @@ async def _node_analyse_sections(state: AnalysisState) -> AnalysisState:
     document_type = outline.get("document_type") or "other"
     llm: LLMProvider = state["llm"]
     progress: ProgressTracker | None = state.get("progress")
-
-    # Cost guard: skip sections that won't yield useful insights.
-    # - References / Acknowledgments are pure boilerplate.
-    # - Very short sections (< _MIN_CHARS_FOR_LLM) get a heuristic-only insight
-    #   without spending an LLM call.
     sections_for_llm: list[MappedSection] = []
     sections_skipped: list[MappedSection] = []
     for s in sections:
@@ -264,10 +205,6 @@ async def _node_analyse_sections(state: AnalysisState) -> AnalysisState:
                 )
         return result
 
-    # Heuristic-only insights for skipped sections — no LLM cost. The
-    # SectionInsightTool's heuristic_fallback path already handles this when
-    # we pass it a stub LLM, so we just call its public API with a sentinel
-    # provider that always raises; the tool then falls through to fallback.
     insights_llm = await asyncio.gather(
         *[analyse_one(s) for s in sections_for_llm]
     )
@@ -276,7 +213,6 @@ async def _node_analyse_sections(state: AnalysisState) -> AnalysisState:
         for s in sections_skipped
     ]
 
-    # Re-merge in original section order so the FE renders sections sequentially
     by_index: dict[int, dict] = {}
     for ins in insights_llm + insights_skipped:
         idx = ins.get("section_index")
@@ -293,8 +229,6 @@ async def _node_analyse_sections(state: AnalysisState) -> AnalysisState:
 
 
 async def _node_synthesize(state: AnalysisState) -> AnalysisState:
-    """Single LLM call that returns BOTH the narrative synthesis AND the
-    executive summary. Caches the summary into state['summary']."""
     if state.get("error"):
         return state
 
@@ -329,10 +263,6 @@ async def _node_synthesize(state: AnalysisState) -> AnalysisState:
 
 
 async def _node_rollup_legacy(state: AnalysisState) -> AnalysisState:
-    """Derive legacy fields (key_findings, methodology, ...) from the
-    structured section insights. This is rule-based — no extra LLM calls —
-    and keeps the old API surface alive for the frontend.
-    """
     if state.get("error"):
         return state
 
@@ -342,34 +272,13 @@ async def _node_rollup_legacy(state: AnalysisState) -> AnalysisState:
     rollup = _aggregate_legacy(insights, synthesis)
     return {**state, "legacy_rollup": rollup}
 
-
-# ---------------------------------------------------------------------------
-# Legacy field aggregation (rule-based)
-# ---------------------------------------------------------------------------
-
 def _aggregate_legacy(
     insights: list[dict], synthesis: dict
 ) -> dict[str, Any]:
-    """Collapse per-section insights into the flat fields exposed by the API.
-
-    Strategy is deliberately simple:
-      - key_findings: top claims across sections (cap 10)
-      - methodology: summary of the methodology section, if any
-      - limitations: weaknesses + open_questions of the limitations section
-                     plus overall_weaknesses from synthesis
-      - future_work: open_questions of future_work section + knowledge_gaps
-      - keywords: notable_terms (term names) across all sections (cap 20)
-      - research_questions: union of section open_questions tagged as RQs
-                            plus knowledge_gaps from synthesis (cap 7)
-      - research_contribution: synthesis.novelty_vs_prior_work
-      - critical_assessment: synthesis-level overall strengths/weaknesses
-                             plus confidence
-    """
     by_type: dict[str, list[dict]] = {}
     for s in insights:
         by_type.setdefault(s.get("section_type") or "other", []).append(s)
 
-    # ── key_findings ─────────────────────────────────────────────────────────
     key_findings: list[str] = []
     for s in insights:
         for c in s.get("claims") or []:
@@ -380,7 +289,6 @@ def _aggregate_legacy(
                 key_findings.append(claim)
     key_findings = key_findings[:10]
 
-    # ── methodology ──────────────────────────────────────────────────────────
     method_section = (
         by_type.get("methodology")
         or by_type.get("methods")
@@ -392,7 +300,6 @@ def _aggregate_legacy(
         first = method_section[0]
         methodology = first.get("summary") or first.get("purpose")
 
-    # ── limitations ──────────────────────────────────────────────────────────
     limitations: list[str] = []
     for s in by_type.get("limitations", []):
         critique = s.get("critique") or {}
@@ -407,7 +314,6 @@ def _aggregate_legacy(
             limitations.append(w)
     limitations = limitations[:10]
 
-    # ── future_work ──────────────────────────────────────────────────────────
     future_work: list[str] = []
     for s in by_type.get("future_work", []):
         for q in s.get("open_questions") or []:
@@ -418,7 +324,6 @@ def _aggregate_legacy(
             future_work.append(g)
     future_work = future_work[:10]
 
-    # ── keywords ─────────────────────────────────────────────────────────────
     keywords: list[str] = []
     for s in insights:
         for term in s.get("notable_terms") or []:
@@ -428,7 +333,6 @@ def _aggregate_legacy(
                     keywords.append(name)
     keywords = keywords[:20]
 
-    # ── research_questions ───────────────────────────────────────────────────
     research_questions: list[str] = []
     intro_like = (
         by_type.get("introduction", [])
@@ -443,7 +347,6 @@ def _aggregate_legacy(
             research_questions.append(g)
     research_questions = research_questions[:7]
 
-    # ── critical_assessment ──────────────────────────────────────────────────
     critical_assessment: dict[str, Any] = {
         "strengths": list(synthesis.get("overall_strengths") or [])[:5],
         "weaknesses": list(synthesis.get("overall_weaknesses") or [])[:5],
@@ -464,11 +367,6 @@ def _aggregate_legacy(
         "research_contribution": synthesis.get("novelty_vs_prior_work"),
         "critical_assessment": critical_assessment or None,
     }
-
-
-# ---------------------------------------------------------------------------
-# Build LangGraph
-# ---------------------------------------------------------------------------
 
 def _build_graph():
     from langgraph.graph import END, StateGraph
@@ -491,17 +389,9 @@ def _build_graph():
 
     return graph.compile()
 
-
 _GRAPH = _build_graph()
 
-
-# ---------------------------------------------------------------------------
-# AnalysisAgent
-# ---------------------------------------------------------------------------
-
 class AnalysisAgent:
-    """Run the section-grounded analysis pipeline for a single document."""
-
     def __init__(
         self,
         db: AsyncSession,
@@ -509,12 +399,8 @@ class AnalysisAgent:
         llm_model: str | None = None,
     ) -> None:
         self.db = db
-        # Caller can pin a provider/model per-analysis. Falls back to
-        # settings.PROVIDER / settings.MODEL_NAME when omitted.
         self.llm_provider = (llm_provider or settings.PROVIDER).lower()
         self.llm_model = llm_model or settings.MODEL_NAME
-
-    # ── Public entry point ───────────────────────────────────────────────────
 
     async def run(self, analysis_id: UUID) -> DocumentAnalysis:
         analysis = await self._get_analysis(analysis_id)
@@ -524,7 +410,6 @@ class AnalysisAgent:
             try:
                 await self._mark_running(analysis)
             except RuntimeError:
-                # Already running or completed — let the caller skip silently
                 return analysis
 
             document = await self._get_document(analysis.document_id)
@@ -572,9 +457,6 @@ class AnalysisAgent:
                 await progress.finish_step(STEP_PERSIST, "saved to DB")
                 await progress.finalize("completed")
             except StaleDataError:
-                # The analysis row was deleted (or its document was deleted
-                # → cascade) while the pipeline was running. Drop the result
-                # silently — the user already explicitly discarded it.
                 await self.db.rollback()
                 logger.warning(
                     f"AnalysisAgent: analysis {analysis_id} disappeared "
@@ -595,8 +477,6 @@ class AnalysisAgent:
                 f"run; aborting cleanly."
             )
         except Exception as e:
-            # Any other failure: rollback FIRST so we can write the failure
-            # marker without dragging a poisoned session along.
             await self.db.rollback()
             logger.error(f"AnalysisAgent: failed for analysis {analysis_id}: {e}")
             try:
@@ -604,16 +484,12 @@ class AnalysisAgent:
             except Exception:
                 pass
             await self._mark_failed(analysis_id, str(e))
-            # Notify the project owner. ``document`` may still be None here
-            # if the failure happened before we resolved it — guard with a
-            # ``locals()`` check.
+
             doc = locals().get("document")
             await self._notify_failed(analysis_id, doc, str(e))
             raise
 
         return analysis
-
-    # ── DB helpers ───────────────────────────────────────────────────────────
 
     async def _get_analysis(self, analysis_id: UUID) -> DocumentAnalysis:
         result = await self.db.execute(
@@ -650,19 +526,6 @@ class AnalysisAgent:
     async def _mark_failed(
         self, analysis_id: UUID, error_message: str
     ) -> None:
-        """Mark an analysis as failed via a direct UPDATE.
-
-        We use an explicit UPDATE statement (rather than mutating the ORM
-        object and committing) for two reasons:
-
-        1. The ORM object may be stale — the row could have been deleted by
-           the user while the pipeline was running. SQLAlchemy raises
-           ``StaleDataError`` on commit when a versioned UPDATE matches 0
-           rows. Direct UPDATE simply does nothing in that case.
-        2. Coming from an except branch, the session may be in a
-           pending-rollback state. UPDATE on a fresh statement after rollback
-           is the safest path — see https://sqlalche.me/e/20/7s2a.
-        """
         from sqlalchemy import update
 
         try:
@@ -678,13 +541,11 @@ class AnalysisAgent:
             result = await self.db.execute(stmt)
             await self.db.commit()
             if result.rowcount == 0:
-                # Row was deleted between status=RUNNING and now.
                 logger.warning(
                     f"AnalysisAgent: tried to mark analysis {analysis_id} "
                     f"as FAILED but row was already gone."
                 )
         except Exception as e:
-            # Don't shadow the original exception with a write-failure.
             await self.db.rollback()
             logger.error(
                 f"AnalysisAgent: failed to record FAILED status for "
@@ -701,16 +562,10 @@ class AnalysisAgent:
         section_insights: list[dict] = state.get("section_insights") or []
         synthesis: dict = state.get("narrative_synthesis") or {}
         rollup: dict = state.get("legacy_rollup") or {}
-
-        # Section-level fields (new pipeline)
         analysis.document_outline = outline or None
         analysis.section_insights = section_insights or None
         analysis.narrative_synthesis = synthesis or None
-
-        # Executive summary
         analysis.summary = state.get("summary")
-
-        # Legacy fields derived from section insights (backward compatibility)
         analysis.key_findings = rollup.get("key_findings") or None
         analysis.methodology = rollup.get("methodology")
         analysis.limitations = rollup.get("limitations") or None
@@ -719,9 +574,6 @@ class AnalysisAgent:
         analysis.research_questions = rollup.get("research_questions") or None
         analysis.research_contribution = rollup.get("research_contribution")
         analysis.critical_assessment = rollup.get("critical_assessment")
-
-        # Structural fields kept for the API but built from the outline so the
-        # response stays consistent with section_insights.
         analysis.sections = [
             {
                 "index": s.get("section_index"),
@@ -732,8 +584,6 @@ class AnalysisAgent:
             for s in section_insights
         ] or None
 
-        # Legacy fields no longer populated by the new pipeline — set to None
-        # so stale data from a prior run does not leak through.
         analysis.extracted_entities = None
         analysis.extracted_tables = None
         analysis.relationships = None
@@ -741,8 +591,6 @@ class AnalysisAgent:
         analysis.sentiment = None
         analysis.evidence_quality = None
         analysis.citation_context = None
-
-        # Status
         analysis.status = AnalysisStatus.COMPLETED.value
         analysis.completed_at = datetime.now(timezone.utc)
         analysis.processed_by = f"{self.llm_provider}:{llm.get_model_name()}"
@@ -750,20 +598,9 @@ class AnalysisAgent:
         await self.db.commit()
         await self.db.refresh(analysis)
 
-
-    # ── Notifications ───────────────────────────────────────────────────────
-
     async def _notify_completed(
         self, analysis_id: UUID, document: Document
     ) -> None:
-        """Push a "phân tích hoàn thành" notification to the project owner.
-
-        We resolve the user via a fresh session because:
-          - the agent's session may have just committed and we don't want
-            to risk a long-running select on it,
-          - this code runs on the success path so there's no rollback to
-            untangle.
-        """
         await self._notify(
             analysis_id=analysis_id,
             document=document,
@@ -814,9 +651,6 @@ class AnalysisAgent:
                         )
                     )
             if user_id is None:
-                # Project gone — drop notification silently. The user
-                # has already deleted the surrounding entity, so a
-                # bell alert would be confusing.
                 return
 
             doc_title = (document.title if document else None) or "tài liệu"

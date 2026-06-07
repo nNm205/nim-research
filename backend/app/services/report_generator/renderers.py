@@ -1,33 +1,12 @@
-"""Report renderers — pure functions over a ``ReportContext``.
-
-Each :func:`render_<type>` returns a ``(markdown, body_html)`` pair. The
-caller wraps ``body_html`` in the shared theme via ``styles.wrap_html``.
-
-Style guidelines:
-- Markdown is CommonMark-only (no extensions). It must round-trip cleanly
-  through every Markdown renderer.
-- HTML is fully escaped on every interpolation. We never render
-  user-provided strings as raw HTML.
-- Sections degrade gracefully: when a field is empty we emit either
-  nothing at all (preferred) or a localized ``"Chưa có dữ liệu"`` placeholder.
-- All user-facing strings are Vietnamese to match the FE.
-"""
-
 from __future__ import annotations
-
 import html as _html
 from datetime import datetime
 from typing import Iterable
-
 from app.services.report_generator.aggregator import (
     DocumentBlock,
     ReportContext,
 )
 from app.utils.constants import ReportType
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
 
 def _esc(value: str | None) -> str:
     """HTML-escape, treating ``None`` as empty."""
@@ -39,8 +18,7 @@ def _esc(value: str | None) -> str:
 def _md_paragraph(text: str | None) -> str:
     if not text:
         return ""
-    # Tighten internal newlines — analysis summaries occasionally contain
-    # hard line breaks that screw with Markdown rendering.
+    
     return " ".join(line.strip() for line in text.splitlines() if line.strip())
 
 
@@ -64,11 +42,6 @@ def _list_html(items: Iterable[str], *, ordered: bool = False) -> str:
     tag = "ol" if ordered else "ul"
     rows = "\n".join(f"  <li>{_esc(i)}</li>" for i in items)
     return f"<{tag}>\n{rows}\n</{tag}>"
-
-
-# Inline SVG icons — the report HTML is self-contained so we can't pull
-# from lucide-react. These are the same shapes Lucide renders, written
-# as SVG strings with currentColor so CSS can theme them.
 
 _LINK_ICON_SVG = (
     '<svg class="src-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
@@ -100,11 +73,6 @@ def _tag_row_html(items: Iterable[str]) -> str:
 
 
 def _source_host(url: str) -> str:
-    """Extract a compact display label from a URL.
-
-    Prefers the host (without ``www.``) so the chip stays narrow and
-    scannable. Falls back to the full URL if parsing fails.
-    """
     try:
         from urllib.parse import urlparse
 
@@ -113,8 +81,7 @@ def _source_host(url: str) -> str:
         if host.startswith("www."):
             host = host[4:]
         path = parsed.path or ""
-        # Tack on a path hint when the host is too generic to identify
-        # the source (e.g. github.com/user/repo, arxiv.org/abs/2401.0001).
+        
         if host in {"arxiv.org", "github.com", "doi.org"} and path:
             return f"{host}{path[:32]}"
         return host or url
@@ -123,7 +90,6 @@ def _source_host(url: str) -> str:
 
 
 def _source_link_html(url: str, *, label: str | None = None) -> str:
-    """Render a styled "Mở nguồn" anchor — link icon + host + arrow."""
     if not url:
         return ""
     text = label or _source_host(url)
@@ -162,14 +128,8 @@ def _doc_meta_html(doc: DocumentBlock) -> str:
         parts.append(_source_link_html(doc.source_url))
     if not parts:
         return ""
-    # Each item lives in its own flex slot — no manual " · " separator
-    # because the `.doc-meta` flex rule provides the spacing, and the
-    # source-link chip already has its own visual border.
+    
     return f'<div class="doc-meta">{"".join(parts)}</div>'
-
-
-# ── Cover & TOC ──────────────────────────────────────────────────────────────
-
 
 _REPORT_TYPE_LABEL_VI = {
     ReportType.RESEARCH_SUMMARY.value: "Tóm tắt nghiên cứu",
@@ -199,14 +159,6 @@ def _cover_md(ctx: ReportContext) -> str:
 
 
 def _topic_chips_html(topic_string: str | None) -> str:
-    """Render a comma-separated topic string as a chip row.
-
-    Project topics live as a comma-joined string (the FE TopicChipInput
-    serialises to the same shape as ProjectCard). Splitting on commas
-    here lets us render the same chip pattern on the report cover so
-    the visual language stays consistent between the project list and
-    the generated reports.
-    """
     if not topic_string:
         return ""
     chips = [t.strip() for t in topic_string.split(",") if t.strip()]
@@ -223,8 +175,6 @@ def _cover_html(ctx: ReportContext) -> str:
     n_total = ctx.total_documents
     n_analyzed = len(ctx.documents_with_analysis)
 
-    # Topic comes through as comma-separated chips (matches ProjectCard).
-    # Description is rendered as a paragraph since it's prose, not tags.
     if ctx.project_topic:
         subtitle = _topic_chips_html(ctx.project_topic)
     elif ctx.project_description:
@@ -267,9 +217,6 @@ def _toc_html(headings: list[str]) -> str:
   </ol>
 </nav>
 """.strip()
-
-
-# ── Document block renderers ────────────────────────────────────────────────
 
 
 def _render_doc_block_md(doc: DocumentBlock, *, depth: int = 3) -> str:

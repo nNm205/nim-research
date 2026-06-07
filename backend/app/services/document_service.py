@@ -51,13 +51,6 @@ def get_project_documents(
     db: Session,
     project_id: UUID
 ) -> list[Document]:
-    """List endpoint — defers the heavy ``content`` / ``raw_content`` columns.
-
-    A processed PDF can have ``content`` of several hundred KB. Returning it
-    for every row of a list view is a major bandwidth + DB I/O cost. The FE
-    list view only needs metadata (title, source, status, created_at, …).
-    """
-
     logger.info(
         f"Fetching documents for project: {project_id}"
     )
@@ -66,7 +59,6 @@ def get_project_documents(
         result = db.execute(
             select(Document)
             .options(
-                # Don't fetch heavy TOAST columns for the list view.
                 defer(Document.content),
                 defer(Document.raw_content),
                 defer(Document.document_metadata),
@@ -100,13 +92,6 @@ def get_user_documents(
     db: Session,
     user_id: UUID
 ) -> list[Document]:
-    """List ALL documents owned by ``user_id`` across every project.
-
-    Joins ``documents`` to ``projects`` on ``user_id``. The same heavy
-    column deferral as ``get_project_documents`` applies — list views only
-    need metadata.
-    """
-
     logger.info(f"Fetching all documents for user: {user_id}")
 
     try:

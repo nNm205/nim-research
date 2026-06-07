@@ -63,24 +63,10 @@ async def start_auto_research(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Kick off the full auto-research pipeline.
-
-    Stages run in the background after the response is returned:
-
-      1. Search arXiv / Google Scholar / Semantic Scholar.
-      2. Ingest top ``max_documents`` results into this project.
-      3. Run AnalysisAgent on each successfully-ingested document.
-
-    The response carries the ``ResearchSession`` row created for the
-    search stage; the FE polls it for ``status`` and follows up with
-    project ``documents`` / ``analyses`` endpoints to see results
-    appear as the pipeline progresses.
-    """
     await verify_project_ownership_async(
         db=db, project_id=project_id, user_id=current_user.id
     )
 
-    # Reuse the existing helper to create the ResearchSession row.
     research_session = await create_research_session(
         db=db,
         project_id=project_id,

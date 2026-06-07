@@ -1,24 +1,12 @@
-"""SynthesisProgressTracker — write SynthesisAgent progress to ``reports.synthesis_progress``.
-
-Mirrors ``app/agents/tools/analysis/progress_tracker.py`` so the FE can
-share a progress-panel component across pipelines.
-"""
-
 from __future__ import annotations
-
 import time
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
-
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.report import Report
 from app.utils.logger import logger
-
-
-# ── Canonical step keys ─────────────────────────────────────────────────────
 
 STEP_LOAD_CONTEXT = "load_context"
 STEP_BUILD_OUTLINE = "build_outline"
@@ -40,10 +28,7 @@ CANONICAL_STEPS: list[dict[str, str]] = [
 
 _MAX_EVENTS = 30
 
-
 class SynthesisProgressTracker:
-    """Persist SynthesisAgent progress into ``reports.synthesis_progress``."""
-
     def __init__(self, db: AsyncSession, report_id: UUID) -> None:
         self.db = db
         self.report_id = report_id
@@ -59,8 +44,6 @@ class SynthesisProgressTracker:
             "provider": None,
             "model": None,
         }
-
-    # ── Public lifecycle ────────────────────────────────────────────────
 
     async def init(
         self, provider: str | None = None, model: str | None = None
@@ -134,8 +117,6 @@ class SynthesisProgressTracker:
             )
         await self._flush()
 
-    # ── Internals ───────────────────────────────────────────────────────
-
     def _label_for(self, key: str) -> str:
         for s in CANONICAL_STEPS:
             if s["key"] == key:
@@ -168,7 +149,6 @@ class SynthesisProgressTracker:
                 await self.db.rollback()
             except Exception:
                 pass
-
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

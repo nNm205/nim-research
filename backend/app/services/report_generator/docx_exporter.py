@@ -1,15 +1,3 @@
-"""Render a Report as a ``.docx`` file using ``python-docx``.
-
-We do NOT try to convert HTML → DOCX. HTML→DOCX conversion is fragile
-(needs Pandoc or LibreOffice on the host) and the styling we want in
-Word never matches the on-screen styling exactly anyway. Instead we
-re-aggregate the project data and lay it out natively with python-docx,
-producing a clean Word document with proper headings, tables, and bullet
-lists that integrates with Word's own style system.
-
-This keeps the .docx export self-contained — no external binaries needed.
-"""
-
 from __future__ import annotations
 
 import io

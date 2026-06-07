@@ -1,5 +1,3 @@
-"""Tools for the SynthesisAgent (cross-document LLM-driven report writer)."""
-
 from app.agents.tools.synthesis.context_loader import (
     SynthesisContext,
     SynthesisContextLoaderTool,

@@ -1,8 +1,6 @@
 from datetime import datetime
 from uuid import UUID
-
 from pydantic import BaseModel, ConfigDict
-
 
 class NotificationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -21,16 +19,9 @@ class NotificationResponse(BaseModel):
 
 
 class NotificationListResponse(BaseModel):
-    """Response payload for the list endpoint.
-
-    ``unread_count`` is included so the FE can update the bell badge in
-    one round-trip without a second ``/unread-count`` call.
-    """
     notifications: list[NotificationResponse]
     unread_count: int
 
 
 class NotificationMarkReadRequest(BaseModel):
-    """Optional payload for the mark-read endpoint. When ``ids`` is
-    omitted the endpoint marks every unread notification as read."""
     ids: list[UUID] | None = None

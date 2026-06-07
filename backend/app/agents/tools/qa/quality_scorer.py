@@ -1,32 +1,7 @@
-"""QualityScorerTool — combine sub-scores into a single overall verdict.
-
-Inputs are the per-check result dicts produced by the format / citation /
-fact / grammar tools (each having ``score``, ``issues``, optionally
-``stats`` and ``details``). Output:
-
-  {
-    "overall_score": int,
-    "verdict": "excellent" | "good" | "needs_review" | "poor",
-    "format": {...},
-    "citations": {...},
-    "facts": {...},
-    "grammar": {...},
-    "recommendations": [str, ...]
-  }
-
-Weights are biased toward facts + citations (a report's accuracy matters
-more than its prose), then format, then grammar. Tweakable here in one
-place.
-"""
-
 from __future__ import annotations
-
 from typing import Any
-
 from app.utils.constants import QAVerdict
 
-
-# Weights must sum to 1.0
 _WEIGHTS = {
     "format": 0.15,
     "citations": 0.30,
@@ -34,10 +9,7 @@ _WEIGHTS = {
     "grammar": 0.20,
 }
 
-
 class QualityScorerTool:
-    """Compose a single QA verdict + recommendations from sub-checks."""
-
     def score(
         self,
         format_result: dict[str, Any],
@@ -75,10 +47,6 @@ class QualityScorerTool:
             "recommendations": recommendations,
         }
 
-
-# ── Helpers ─────────────────────────────────────────────────────────────
-
-
 def _safe_score(result: dict[str, Any] | None) -> int:
     if not isinstance(result, dict):
         return 70
@@ -105,8 +73,6 @@ def _build_recommendations(
     grammar_result: dict[str, Any],
 ) -> list[str]:
     recs: list[str] = []
-
-    # Highest-priority recommendations come from "high" severity issues.
     for area_name, area in (
         ("Định dạng", format_result),
         ("Trích dẫn", citations_result),
@@ -120,8 +86,6 @@ def _build_recommendations(
                 if msg:
                     recs.append(f"[{area_name}] {msg}")
 
-    # If nothing high-severity, still surface 1-2 medium issues so the user
-    # has actionable feedback even on a "good" report.
     if len(recs) < 2:
         for area_name, area in (
             ("Trích dẫn", citations_result),
@@ -139,10 +103,6 @@ def _build_recommendations(
             if len(recs) >= 4:
                 break
 
-    # Heuristic suggestion when the fact-check produced nothing useful
-    # (template report with no inline citations). Steer the user toward
-    # running Synthesis so the next QA pass actually has something to
-    # verify against.
     facts_stats = (facts_result or {}).get("stats") or {}
     checked = facts_stats.get("claims_checked", 0)
     supported = facts_stats.get("supported", 0)

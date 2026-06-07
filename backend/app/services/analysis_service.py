@@ -1,23 +1,9 @@
-"""Analysis service.
-
-Notes on perf:
-- Heavy JSONB columns (section_insights / narrative_synthesis / progress / ...)
-  are only loaded for the *detail* endpoints. The list and status endpoints
-  use ``load_only`` to fetch the few scalar columns the FE actually shows.
-- ``DocumentAnalysis.document`` is no longer ``lazy="selectin"`` at the model
-  level; we attach it explicitly via ``selectinload`` only when the caller
-  needs it (e.g. for ownership checks). This avoids cascading loads of
-  ``Document.project + search_results + analysis`` per analysis.
-"""
-
 import asyncio
 from uuid import UUID
-
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
-
 from app.agents.analysis_agent import AnalysisAgent
 from app.database.session import AsyncSessionLocal
 from app.models.analysis import DocumentAnalysis
@@ -25,10 +11,6 @@ from app.models.document import Document
 from app.utils.constants import AnalysisStatus
 from app.utils.logger import logger
 
-
-# Columns that the list-view (`GET /projects/{id}/analyses`) actually surfaces.
-# Heavy JSONB / TEXT columns are intentionally excluded and stay un-loaded
-# unless explicitly requested.
 _LIST_COLUMNS = (
     DocumentAnalysis.id,
     DocumentAnalysis.document_id,
@@ -38,9 +20,6 @@ _LIST_COLUMNS = (
     DocumentAnalysis.error_message,
     DocumentAnalysis.processed_by,
 )
-
-# Columns the status poll endpoint surfaces. Includes ``progress`` JSONB
-# because the FE renders the live progress panel from it.
 _STATUS_COLUMNS = (
     DocumentAnalysis.id,
     DocumentAnalysis.document_id,
@@ -57,7 +36,6 @@ async def create_document_analysis(
 ) -> DocumentAnalysis:
     logger.info(f"Creating analysis for document: {document_id}")
 
-    # We only need to confirm the document exists; load just the id.
     doc_exists = await db.scalar(
         select(Document.id).where(Document.id == document_id)
     )
@@ -106,16 +84,6 @@ async def get_document_analysis_by_id(
     light: bool = False,
     with_document: bool = False,
 ) -> DocumentAnalysis:
-    """Fetch one analysis.
-
-    Args:
-        light: if True, only load the columns shown by the status endpoint
-            (id / document_id / status / dates / error / progress). All
-            heavy JSONB columns stay un-loaded.
-        with_document: if True, eagerly attach ``analysis.document`` with
-            only the columns needed for ownership checks (id, project_id,
-            title). Use this when the caller needs ``analysis.document.*``.
-    """
     stmt = select(DocumentAnalysis).where(DocumentAnalysis.id == analysis_id)
 
     if light:
@@ -182,11 +150,6 @@ async def delete_document_analysis(
 async def get_project_analyses(
     db: AsyncSession, project_id: UUID
 ) -> list[DocumentAnalysis]:
-    """List analyses for a project — list-view columns only.
-
-    Heavy JSONB (section_insights, narrative_synthesis, ...) are NOT loaded
-    here. Detail data is fetched per-analysis on the results page.
-    """
     logger.info(f"Fetching analyses for project: {project_id}")
     try:
         stmt = (
@@ -222,13 +185,6 @@ async def get_project_analyses(
 async def get_user_analyses(
     db: AsyncSession, user_id: UUID
 ) -> list[DocumentAnalysis]:
-    """List analyses for ALL projects owned by ``user_id``.
-
-    Used by the ``Analyses`` page that lists everything the user has run
-    across every project. Same list-view column shape as
-    ``get_project_analyses`` so the FE can render either with the same
-    ``AnalysisCard`` component.
-    """
     from app.models.project import Project
 
     logger.info(f"Fetching analyses for user: {user_id}")
@@ -277,8 +233,6 @@ async def _run_agent_in_background(
     except Exception as e:
         logger.error(f"Background analysis task failed for {analysis_id}: {e}")
 
-
-# Keep references to background tasks so the GC doesn't drop them.
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 

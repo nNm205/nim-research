@@ -1,33 +1,15 @@
-"""GeminiProvider — Google Gemini LLM via the public generativelanguage REST API.
-
-Uses httpx so we don't add a new SDK dependency. Endpoint format:
-  POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}
-
-Request shape:
-  {
-    "system_instruction": {"parts": [{"text": "..."}]},   # optional
-    "contents": [{"role": "user|model", "parts": [{"text": "..."}]}],
-    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1500}
-  }
-"""
-
 from __future__ import annotations
-
 import asyncio
 import re
 from typing import Dict, List, Optional
-
 import httpx
 import requests
-
 from app.models.llm_providers.base import LLMProvider
 from app.utils.logger import logger
 
 
 _DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 _DEFAULT_TIMEOUT = 120.0
-# Free tier is 5 RPM for gemini-2.5-flash. We retry on 429 instead of failing
-# fast so a long-running pipeline can ride out the quota window.
 _MAX_RETRIES_429 = 3
 _RETRY_BACKOFF_FALLBACK_S = 8.0
 
@@ -44,8 +26,6 @@ class GeminiProvider(LLMProvider):
         self.api_key = api_key
         self.model = model
         self.base_url = (base_url or _DEFAULT_BASE_URL).rstrip("/")
-
-    # ── Public API ──────────────────────────────────────────────────────────
 
     async def generate(
         self,
@@ -71,7 +51,6 @@ class GeminiProvider(LLMProvider):
         messages: List[Dict[str, str]],
         **kwargs,
     ) -> str:
-        # Extract a leading "system" message if present
         system_prompt: Optional[str] = None
         if messages and messages[0].get("role") == "system":
             system_prompt = messages[0].get("content")
@@ -82,7 +61,7 @@ class GeminiProvider(LLMProvider):
             role = msg.get("role")
             if role not in {"user", "assistant", "model"}:
                 continue
-            # Gemini uses "model" instead of "assistant"
+            
             gemini_role = "model" if role == "assistant" else role
             text = msg.get("content") or ""
             if not text:
@@ -123,8 +102,6 @@ class GeminiProvider(LLMProvider):
     def get_model_name(self) -> str:
         return self.model
 
-    # ── Internals ───────────────────────────────────────────────────────────
-
     def _gen_config(
         self,
         temperature: float,
@@ -139,8 +116,6 @@ class GeminiProvider(LLMProvider):
             cfg["topP"] = kwargs["top_p"]
         if "top_k" in kwargs:
             cfg["topK"] = kwargs["top_k"]
-        # Caller can request JSON-only output (Gemini will refuse to wrap it
-        # in markdown / commentary). The Analysis pipeline relies on this.
         if kwargs.get("response_format") == "json":
             cfg["responseMimeType"] = "application/json"
         return cfg
@@ -178,7 +153,6 @@ class GeminiProvider(LLMProvider):
 
     @staticmethod
     def _retry_delay_seconds(response: httpx.Response) -> float:
-        """Honour Google's `retryDelay` field when present, else fall back."""
         try:
             body = response.json()
         except Exception:
@@ -191,14 +165,12 @@ class GeminiProvider(LLMProvider):
                 if isinstance(raw, str):
                     m = re.match(r"^(\d+(?:\.\d+)?)s$", raw)
                     if m:
-                        # Add a small buffer over the server-suggested delay
                         return float(m.group(1)) + 0.5
         return _RETRY_BACKOFF_FALLBACK_S
 
     def _extract_text(self, data: dict) -> str:
         candidates = data.get("candidates") or []
         if not candidates:
-            # Surface block reason if present
             feedback = data.get("promptFeedback") or {}
             reason = feedback.get("blockReason")
             if reason:
@@ -217,9 +189,6 @@ class GeminiProvider(LLMProvider):
                 texts.append(text)
         result = "".join(texts)
 
-        # MAX_TOKENS means the model was cut off mid-output. Surface this loudly
-        # so the caller can bump max_tokens or simplify the prompt — silently
-        # returning truncated JSON guarantees parse failures downstream.
         if finish_reason == "MAX_TOKENS":
             logger.warning(
                 f"Gemini returned MAX_TOKENS finishReason for model {self.model!r}. "

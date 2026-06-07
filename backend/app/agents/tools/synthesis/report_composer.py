@@ -1,27 +1,13 @@
-"""ReportComposerTool — combine outline + narrative + summary + citations.
-
-Pure deterministic composition. Produces ``(markdown, html)`` in the same
-shape as the existing ``app.services.report_generator`` so the FE renders
-both report flavours identically.
-
-We reuse the report_generator's ``styles.wrap_html`` for consistent CSS.
-"""
-
 from __future__ import annotations
-
 import html as _html
 import re
 from datetime import datetime
 from typing import Iterable
-
 from app.agents.tools.synthesis.context_loader import SynthesisContext
 from app.services.report_generator.styles import wrap_html
 
 
-# Inline citation regex matching `[n]` / `[n, m]`. We linkify these in the
-# rendered HTML to anchors pointing at the references list.
 _CITATION_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
-
 
 def _esc(value: str | None) -> str:
     if value is None:
@@ -30,8 +16,6 @@ def _esc(value: str | None) -> str:
 
 
 def _topic_chips_html(topic_string: str | None) -> str:
-    """Render a comma-separated topic string as a violet chip row matching
-    the ProjectCard chip pattern. Returns empty string when no chips."""
     if not topic_string:
         return ""
     chips = [t.strip() for t in topic_string.split(",") if t.strip()]
@@ -42,13 +26,11 @@ def _topic_chips_html(topic_string: str | None) -> str:
     )
     return f'<div class="report-tag-row cover-topics">{pills}</div>'
 
-
 def _format_date_vi(value: datetime) -> str:
     return value.strftime("%d/%m/%Y %H:%M")
 
 
 def _linkify_citations_html(body_html: str, valid_indices: set[int]) -> str:
-    """Replace every `[n]` with a small superscript anchor."""
     def repl(m: re.Match) -> str:
         nums = [s.strip() for s in m.group(1).split(",")]
         anchors: list[str] = []
@@ -67,25 +49,20 @@ def _linkify_citations_html(body_html: str, valid_indices: set[int]) -> str:
 
 
 def _paragraphs_html(body: str) -> str:
-    """Convert plain prose with blank-line paragraphs to <p>...</p>."""
     parts = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
     return "\n".join(f"<p>{_esc(p)}</p>" for p in parts)
 
-
 def _paragraphs_html_keep_brackets(body: str) -> str:
-    """Same as _paragraphs_html but escapes everything except `[n]` markers
-    which we'll later linkify into <a> anchors."""
     parts = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
     safe_parts: list[str] = []
     for p in parts:
-        # Replace each [n] with a unique placeholder before HTML-escaping
         placeholders: list[str] = []
         def stash(m: re.Match) -> str:
             placeholders.append(m.group(0))
             return f"\x00CIT{len(placeholders) - 1}\x00"
         replaced = _CITATION_RE.sub(stash, p)
         escaped = _html.escape(replaced, quote=True)
-        # Restore citations
+
         for idx, original in enumerate(placeholders):
             escaped = escaped.replace(f"\x00CIT{idx}\x00", original)
         safe_parts.append(f"<p>{escaped}</p>")
@@ -93,8 +70,6 @@ def _paragraphs_html_keep_brackets(body: str) -> str:
 
 
 class ReportComposerTool:
-    """Compose markdown + HTML for a synthesised report."""
-
     def compose(
         self,
         context: SynthesisContext,
@@ -111,7 +86,6 @@ class ReportComposerTool:
         sections = outline.get("sections") or []
         narrative_sections = (narrative or {}).get("sections") or {}
 
-        # Markdown
         md_lines: list[str] = []
         md_lines.append(f"# {outline.get('title') or context.report_title}")
         md_lines.append("")
@@ -155,7 +129,6 @@ class ReportComposerTool:
 
         markdown = "\n".join(md_lines).strip() + "\n"
 
-        # HTML
         html_parts: list[str] = []
         html_parts.append(self._cover_html(context, outline, generated_at, provider, model))
 
@@ -257,15 +230,10 @@ class ReportComposerTool:
             outline.get("title") or context.report_title or "Báo cáo",
             body_html,
         )
-        # Inject extra CSS the synthesis-only renderers need (citation
-        # superscript + reference list). We prepend a <style> tag inside
-        # the existing wrapper.
         full_html = full_html.replace(
             "</style>", _EXTRA_CSS + "\n</style>", 1
         )
         return markdown, full_html
-
-    # ── Helpers ──────────────────────────────────────────────────────────
 
     def _meta_md(
         self,
@@ -296,11 +264,6 @@ class ReportComposerTool:
         n_total = len(context.documents)
         n_analyzed = len(context.documents_with_analysis)
         title = outline.get("title") or context.report_title or "Báo cáo"
-
-        # Cover subtitle: prefer the LLM-generated thesis (it's a single
-        # narrative sentence), fall back to the project topic which lives
-        # as a comma-joined string and is rendered as chips matching the
-        # ProjectCard pattern. Description is prose, so it stays as <p>.
         thesis = outline.get("thesis")
         if thesis:
             subtitle_html = f'<p class="subtitle">{_esc(thesis)}</p>'
@@ -346,7 +309,6 @@ class ReportComposerTool:
 
 
 def collect_narrative_text(narrative: dict, sections: Iterable[dict]) -> str:
-    """Concatenate every section body for the executive-summary call."""
     parts: list[str] = []
     sections_map = (narrative or {}).get("sections") or {}
     for s in sections:

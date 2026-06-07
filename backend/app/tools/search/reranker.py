@@ -18,7 +18,6 @@ class SearchReranker:
 
         document_texts = [self._build_document_text(doc) for doc in documents]
 
-        # model.encode() là blocking — chạy trong thread pool
         query_embedding, document_embeddings = await asyncio.gather(
             asyncio.to_thread(self.model.encode, query, convert_to_tensor=True),
             asyncio.to_thread(self.model.encode, document_texts, convert_to_tensor=True),

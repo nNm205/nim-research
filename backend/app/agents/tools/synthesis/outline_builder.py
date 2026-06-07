@@ -1,14 +1,9 @@
-"""OutlineBuilderTool — design a cross-document outline (1 LLM call)."""
-
 from __future__ import annotations
-
 from typing import Any
-
 from app.agents.tools.analysis.json_utils import parse_llm_json
 from app.agents.tools.synthesis.context_loader import SynthesisContext
 from app.prompts.synthesis import OUTLINE_SYSTEM_PROMPT, OUTLINE_USER_PROMPT
 from app.utils.logger import logger
-
 
 _DEFAULT_SECTIONS = [
     {
@@ -39,16 +34,11 @@ _DEFAULT_SECTIONS = [
 
 
 class OutlineBuilderTool:
-    """Produce a cross-document outline structure."""
-
     async def build(
         self,
         context: SynthesisContext,
         llm: Any,
     ) -> dict:
-        # Edge case: no analyzed docs → fall back to a stub deterministic
-        # outline so the rest of the pipeline still produces something
-        # useful (it'll mostly degrade to the existing template).
         if not context.documents_with_analysis:
             logger.info(
                 "OutlineBuilder: no analyzed documents — using default outline"
@@ -84,8 +74,6 @@ class OutlineBuilderTool:
 
         return self._normalise(parsed, context)
 
-    # ── Helpers ──────────────────────────────────────────────────────────
-
     def _normalise(
         self, parsed: dict, context: SynthesisContext
     ) -> dict:
@@ -104,7 +92,6 @@ class OutlineBuilderTool:
             if not title:
                 continue
             key = (s.get("key") or "").strip().lower() or _slug(title)
-            # Make keys unique
             base_key = key
             i = 2
             while key in seen_keys:
@@ -157,8 +144,6 @@ class OutlineBuilderTool:
         }
 
     def _fallback_outline(self, context: SynthesisContext) -> dict:
-        # Pre-fill documents_to_use across the default findings section so
-        # the narrative call still has something to write about.
         sections = [dict(s) for s in _DEFAULT_SECTIONS]
         if context.documents_with_analysis:
             sections[1]["documents_to_use"] = [
@@ -173,7 +158,6 @@ class OutlineBuilderTool:
 
 
 def _slug(text: str) -> str:
-    """Cheap slug — keep alnum + underscore, lowercase."""
     out: list[str] = []
     for ch in text.lower():
         if ch.isalnum():

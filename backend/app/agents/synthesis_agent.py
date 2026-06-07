@@ -1,35 +1,10 @@
-"""SynthesisAgent — LLM-driven cross-document report writer.
-
-Pipeline (LangGraph):
-
-  START
-    → load_context        (deterministic — gather Project + Documents + Analyses)
-    → build_outline       (1 LLM call — design cross-document outline)
-    → synthesize_narrative (1 LLM call — write per-section narrative with [n] cites)
-    → generate_summary    (1 LLM call — executive summary + key takeaways)
-    → build_citations     (deterministic — APA + BibTeX)
-    → render_report       (deterministic — compose markdown + HTML)
-    → persist             (write to Report.content / html_content / synthesis_metadata)
-  END
-
-Total LLM calls per report ≈ 3.
-
-The agent OVERWRITES ``Report.content`` and ``Report.html_content`` with the
-synthesised version. The previous deterministic content is preserved in
-``Report.synthesis_metadata.original_template_md`` so an FE rollback button
-can restore it.
-"""
-
 from __future__ import annotations
-
 from datetime import datetime, timezone
 from typing import Any, TypedDict
 from uuid import UUID
-
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
-
 from app.agents.tools.synthesis import (
     CitationManagerTool,
     ExecutiveSummaryGeneratorTool,
@@ -63,9 +38,6 @@ from app.utils.logger import logger
 __all__ = ["SynthesisAgent"]
 
 
-# ---------------------------------------------------------------------------
-# LangGraph state
-# ---------------------------------------------------------------------------
 class SynthesisState(TypedDict, total=False):
     report_id: UUID
     report: Report
@@ -73,7 +45,6 @@ class SynthesisState(TypedDict, total=False):
     db: AsyncSession
     llm: LLMProvider
     progress: SynthesisProgressTracker
-
     context: SynthesisContext
     outline: dict
     narrative: dict
@@ -81,13 +52,7 @@ class SynthesisState(TypedDict, total=False):
     citations: dict
     markdown: str
     html: str
-
     error: str | None
-
-
-# ---------------------------------------------------------------------------
-# Pipeline nodes
-# ---------------------------------------------------------------------------
 
 async def _node_load_context(state: SynthesisState) -> SynthesisState:
     progress = state["progress"]
@@ -203,7 +168,6 @@ async def _node_build_citations(state: SynthesisState) -> SynthesisState:
     progress = state["progress"]
     await progress.start_step(STEP_BUILD_CITATIONS)
 
-    # Collect every cited index across all sections.
     cited: set[int] = set()
     sections_map = (state.get("narrative") or {}).get("sections") or {}
     for entry in sections_map.values():
@@ -248,11 +212,6 @@ async def _node_render_report(state: SynthesisState) -> SynthesisState:
     )
     return {**state, "markdown": markdown, "html": html}
 
-
-# ---------------------------------------------------------------------------
-# Build LangGraph
-# ---------------------------------------------------------------------------
-
 def _build_graph():
     from langgraph.graph import END, StateGraph
 
@@ -277,14 +236,7 @@ def _build_graph():
 
 _GRAPH = _build_graph()
 
-
-# ---------------------------------------------------------------------------
-# SynthesisAgent
-# ---------------------------------------------------------------------------
-
 class SynthesisAgent:
-    """Run the cross-document synthesis pipeline for a single Report."""
-
     def __init__(
         self,
         db: AsyncSession,
@@ -295,8 +247,6 @@ class SynthesisAgent:
         self.llm_provider = (llm_provider or settings.PROVIDER).lower()
         self.llm_model = llm_model or settings.MODEL_NAME
 
-    # ── Public entry point ──────────────────────────────────────────────
-
     async def run(self, report_id: UUID) -> Report:
         report = await self._get_report(report_id)
         progress = SynthesisProgressTracker(self.db, report_id)
@@ -305,7 +255,6 @@ class SynthesisAgent:
             try:
                 await self._mark_running(report)
             except RuntimeError:
-                # Already running — caller skip silently
                 return report
 
             project = await self._get_project(report.project_id)
@@ -384,8 +333,6 @@ class SynthesisAgent:
 
         return report
 
-    # ── DB helpers ──────────────────────────────────────────────────────
-
     async def _get_report(self, report_id: UUID) -> Report:
         result = await self.db.execute(
             select(Report).where(Report.id == report_id)
@@ -455,21 +402,14 @@ class SynthesisAgent:
         citations = state.get("citations") or {}
         markdown = state.get("markdown") or ""
         html = state.get("html") or ""
-
-        # Preserve the existing template-rendered content for rollback.
         original_md = report.content
         original_html = report.html_content
 
-        # Overwrite report content with the synthesised version.
         report.content = markdown
         report.html_content = html
-
         report.synthesis_status = SynthesisStatus.COMPLETED.value
         report.synthesis_completed_at = datetime.now(timezone.utc)
         report.synthesis_error = None
-
-        # Compact metadata snapshot — full narrative + outline + citations
-        # so the FE / regen flow has everything it needs.
         report.synthesis_metadata = {
             "provider": self.llm_provider,
             "model": llm.get_model_name(),
@@ -486,8 +426,6 @@ class SynthesisAgent:
 
         await self.db.commit()
         await self.db.refresh(report)
-
-    # ── Notifications ───────────────────────────────────────────────────
 
     async def _notify(
         self,

@@ -26,10 +26,7 @@ import app.services.document_service as document_service
 router = APIRouter(prefix="/api/v1/projects", tags=["Documents"])
 ingest_router = APIRouter(prefix="/api/v1/projects", tags=["Documents"])
 meta_router = APIRouter(prefix="/api/v1/embeddings", tags=["Embeddings"])
-
-# Cross-project list endpoint — exposes /api/v1/documents (no project scope).
 all_router = APIRouter(prefix="/api/v1", tags=["Documents"])
-
 
 @all_router.get(
     "/documents",
@@ -39,16 +36,7 @@ def get_all_user_documents(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """All documents owned by the current user, across every project.
-
-    Used by the ``Documents`` page that lists everything the user has
-    uploaded so they can filter by project on the client side without
-    making N round-trips (one per project).
-    """
     return document_service.get_user_documents(db=db, user_id=current_user.id)
-
-
-# ── Embedding providers metadata ─────────────────────────────────────────────
 
 EMBEDDING_PROVIDERS_CATALOG = [
     {
@@ -161,9 +149,6 @@ def get_embedding_providers(current_user=Depends(get_current_user)):
     """Return all available embedding providers and their models."""
     return EMBEDDING_PROVIDERS_CATALOG
 
-
-# ── Standard CRUD endpoints (sync) ──────────────────────────────────────────
-
 @router.get(
     "/{project_id}/documents",
     response_model=list[DocumentListItemResponse],
@@ -262,9 +247,6 @@ def delete_project_document(
     document_service.delete_document(db=db, document=document)
     return {"message": "Document deleted successfully"}
 
-
-# ── URL Ingestion endpoint (async — uses DocumentIngestionService) ────────────
-
 @ingest_router.post(
     "/{project_id}/documents/ingest-url",
     response_model=DocumentResponse,
@@ -308,9 +290,6 @@ async def ingest_url_as_document(
 
     return document
 
-
-# ── Search-result ingest endpoint ────────────────────────────────────────────
-
 @ingest_router.post(
     "/{project_id}/documents/ingest-search-result",
     response_model=DocumentResponse,
@@ -322,14 +301,6 @@ async def ingest_search_result_as_document(
     db: AsyncSession = Depends(get_async_db),
     current_user=Depends(get_current_user),
 ):
-    """Ingest a research-search result into the project.
-
-    Looks up the ``SearchResult`` row by ``result_id``, locates a PDF
-    (existing ``pdf_url`` / arXiv-derived / Unpaywall via DOI / scraped
-    from the landing page), and falls back to ingesting the landing
-    HTML if no PDF is found. Marks the search-result row with the new
-    ``document_id`` so the FE can show "Đã thêm".
-    """
     from sqlalchemy import select
     from app.models.research import SearchResult, ResearchSession
     from app.services.project_service import verify_project_ownership_async
@@ -386,10 +357,6 @@ async def ingest_search_result_as_document(
             search_result=result_row,
         )
     except NonAcademicSourceError as e:
-        # User explicitly opted into restricting ingest to academic
-        # sources — surface this distinctly so the FE can show a
-        # specific "không phải nguồn học thuật" message instead of a
-        # generic 422.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -415,18 +382,11 @@ async def ingest_search_result_as_document(
             detail=f"Không thể xử lý kết quả tìm kiếm: {e}",
         )
 
-    # Link the search result row to the new document so future loads can
-    # render an "Đã thêm" badge without re-querying.
     result_row.document_id = document.id
     await db.commit()
 
     return document
 
-
-# ── File upload endpoint (multipart — PDF / HTML) ────────────────────────────
-
-# Hard cap on uploaded file size. 50 MB covers >99 % of academic PDFs while
-# preventing accidental DoS. Adjust if your users routinely upload bigger files.
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
@@ -443,12 +403,6 @@ async def upload_file_as_document(
     db: AsyncSession = Depends(get_async_db),
     current_user=Depends(get_current_user),
 ):
-    """Upload a PDF or HTML file directly, extract content, chunk and embed.
-
-    Same backend pipeline as ``ingest-url`` but the file is supplied as a
-    multipart upload instead of being fetched. Useful for documents the
-    user has locally that aren't on the public web.
-    """
     from app.services.project_service import verify_project_ownership_async
     from app.services.document_ingestion_service import DocumentIngestionService
 

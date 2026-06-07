@@ -17,8 +17,6 @@ class DocumentUpdate(BaseModel):
     relevance_score: float | None = None
 
 class DocumentResponse(BaseModel):
-    """Detail-view document response — includes full ``content``."""
-
     id: uuid.UUID
     project_id: uuid.UUID
     title: str
@@ -35,13 +33,6 @@ class DocumentResponse(BaseModel):
 
 
 class DocumentListItemResponse(BaseModel):
-    """Compact document row for list endpoints — no full text content.
-
-    The list view (project documents page) doesn't render ``content``; it
-    only shows title + source + processed flag. Excluding ``content`` here
-    saves megabytes per request when a project has many large PDFs.
-    """
-
     id: uuid.UUID
     project_id: uuid.UUID
     title: str
@@ -57,19 +48,12 @@ class DocumentListItemResponse(BaseModel):
 
 class URLIngestRequest(BaseModel):
     url: str
-    source_type: str = "web"  # "web" | "academic"
-    embedding_provider: str | None = None   # override default provider
-    embedding_model: str | None = None      # override default model
+    source_type: str = "web"  
+    embedding_provider: str | None = None   
+    embedding_model: str | None = None     
 
 
 class SearchResultIngestRequest(BaseModel):
-    """Body for POST /projects/{project_id}/documents/ingest-search-result.
-
-    Identifies a SearchResult row to ingest into the project. The server
-    locates a downloadable PDF for the result (Unpaywall / arXiv / page
-    scrape) and falls back to ingesting the landing page HTML.
-    """
-
     result_id: uuid.UUID
     embedding_provider: str | None = None
     embedding_model: str | None = None

@@ -1,19 +1,14 @@
 from uuid import UUID
-
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
-
 from app.database.session import get_db
 from app.dependencies import get_current_user
-
 from app.models.user import User
-
 from app.schemas.project import (
     ProjectCreate,
     ProjectUpdate,
     ProjectResponse
 )
-
 from app.services.project_service import (
     create_project as create_project_service,
     get_user_projects as get_user_projects_service,

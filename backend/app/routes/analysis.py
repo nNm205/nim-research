@@ -26,12 +26,6 @@ from app.services.analysis_service import (
 
 router = APIRouter(prefix="/api/v1", tags=["Analysis"])
 
-
-# ── LLM provider catalog ─────────────────────────────────────────────────────
-# Static list — mirrors the embedding catalog in routes/documents.py. We don't
-# query each provider's API to enumerate models because most paid APIs charge
-# for that and rate-limit it.
-
 LLM_PROVIDERS_CATALOG = [
     {
         "value": "gemini",
@@ -230,9 +224,6 @@ async def get_analysis_status(
         user_id=current_user.id
     )
 
-    # Status poll: load only the columns the FE renders. Skip the heavy
-    # JSONB columns (section_insights, narrative_synthesis, document_outline,
-    # ...). ``progress`` is included via the LIGHT loader.
     analysis = await get_document_analysis_by_id(
         db=db,
         analysis_id=task_id,
@@ -327,7 +318,6 @@ async def get_document_sections(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Per-section deep insights (claims, critique, quotes, etc.)."""
     analysis = await get_document_analysis_by_document(
         db=db,
         document_id=doc_id,
@@ -355,7 +345,6 @@ async def get_document_section(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Single section's full insight object."""
     analysis = await get_document_analysis_by_document(
         db=db,
         document_id=doc_id,
@@ -389,7 +378,6 @@ async def get_document_synthesis(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Cross-section narrative synthesis (thesis, argument flow, gaps, ...)."""
     analysis = await get_document_analysis_by_document(
         db=db,
         document_id=doc_id,
@@ -434,11 +422,6 @@ async def get_all_user_analyses(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user),
 ):
-    """All analyses owned by the current user, across every project.
-
-    Used by the ``Analysis`` page that lists everything the user has run.
-    Same list-view shape as the per-project endpoint.
-    """
     return await get_user_analyses(db=db, user_id=current_user.id)
 
 

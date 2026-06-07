@@ -1,18 +1,3 @@
-"""Aggregate Project + Documents + DocumentAnalysis into a flat
-``ReportContext`` consumed by the renderers.
-
-Keeping this layer separate from the renderers means:
-  - the SQL queries live in one place,
-  - the renderers stay pure (input → output),
-  - we can unit-test renderers without a DB.
-
-The aggregator deliberately tolerates partial data: a project may have
-documents with no analysis yet, analyses that failed, or documents the
-user has explicitly excluded via ``Report.included_documents``. Every
-field in ``ReportContext`` is therefore optional and defaults to a sane
-empty value.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,13 +14,8 @@ from app.models.project import Project
 from app.utils.constants import AnalysisStatus
 
 
-# ── Data shapes ──────────────────────────────────────────────────────────────
-
-
 @dataclass
 class DocumentBlock:
-    """A document together with its (optional) completed analysis."""
-
     id: UUID
     title: str
     source_url: str | None
@@ -60,7 +40,6 @@ class DocumentBlock:
     def display_title(self) -> str:
         return self.title or "Untitled document"
 
-
 @dataclass
 class ReportContext:
     project_name: str
@@ -72,8 +51,6 @@ class ReportContext:
     documents: list[DocumentBlock]
     generated_at: datetime
     included_documents_filter: list[UUID] | None = field(default=None)
-
-    # Project-level rollups (computed across all documents)
     aggregate_keywords: list[str] = field(default_factory=list)
     aggregate_findings: list[str] = field(default_factory=list)
     aggregate_research_questions: list[str] = field(default_factory=list)
@@ -89,16 +66,7 @@ class ReportContext:
     def total_documents(self) -> int:
         return len(self.documents)
 
-
-# ── Aggregator ───────────────────────────────────────────────────────────────
-
-
 def _ensure_str_list(value: Any, *, max_len: int = 100) -> list[str]:
-    """Best-effort: coerce a JSONB value to ``list[str]``.
-
-    Tolerates the variety of shapes produced by the analysis pipeline:
-    plain strings, dicts with ``claim`` / ``description`` keys, etc.
-    """
     if not value:
         return []
     out: list[str] = []
@@ -138,7 +106,6 @@ def _ensure_str_list(value: Any, *, max_len: int = 100) -> list[str]:
 def _build_document_block(
     document: Document, analysis: DocumentAnalysis | None
 ) -> DocumentBlock:
-    """Flatten an (optionally completed) analysis into the renderer shape."""
     has_analysis = (
         analysis is not None
         and analysis.status == AnalysisStatus.COMPLETED.value
@@ -200,8 +167,6 @@ def _build_document_block(
 def _aggregate_across_documents(
     blocks: list[DocumentBlock],
 ) -> dict[str, list[str]]:
-    """Compute project-level rollups (deduplicated) across all blocks."""
-
     def _flatten(attr: str, cap: int) -> list[str]:
         seen: set[str] = set()
         out: list[str] = []
@@ -245,16 +210,6 @@ def build_report_context(
     report_type: str,
     included_documents: list[UUID] | None,
 ) -> ReportContext:
-    """Load + aggregate the data the renderers need.
-
-    Args:
-        db: a sync ``Session`` (the report routes are sync).
-        project: the owning project (already verified).
-        report_title: title to render on the cover.
-        report_type: one of ``ReportType`` values.
-        included_documents: explicit doc filter; ``None`` / ``[]`` means
-            "all documents in the project".
-    """
     stmt = (
         select(Document)
         .where(Document.project_id == project.id)

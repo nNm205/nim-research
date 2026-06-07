@@ -12,12 +12,6 @@ Three LLM calls per report:
 Temperature recommendations live next to each block.
 """
 
-# ---------------------------------------------------------------------------
-# 1. OUTLINE — produce the cross-document table of contents
-# Temperature: 0.3   Max tokens: ~1200
-# Output: JSON
-# ---------------------------------------------------------------------------
-
 OUTLINE_SYSTEM_PROMPT = """You are a senior research synthesist. You read a
 compact JSON digest of multiple analysed documents and design the OUTLINE of
 a single, coherent cross-document report.
@@ -65,13 +59,6 @@ Documents available (one entry per analysed document, with index):
 
 Return the JSON outline."""
 
-
-# ---------------------------------------------------------------------------
-# 2. NARRATIVE — write the prose for each section
-# Temperature: 0.4   Max tokens: ~3500
-# Output: JSON map keyed by section.key
-# ---------------------------------------------------------------------------
-
 NARRATIVE_SYSTEM_PROMPT = """You are a senior research writer. You are given
 an outline and a digest of analysed documents. Your job is to WRITE THE
 NARRATIVE for each section of the outline.
@@ -115,13 +102,6 @@ position in this list):
 {documents_digest}
 
 Return the JSON narrative object."""
-
-
-# ---------------------------------------------------------------------------
-# 3. EXECUTIVE SUMMARY — written after the narrative is known
-# Temperature: 0.3   Max tokens: ~700
-# Output: JSON {"executive_summary": string, "key_takeaways": [string]}
-# ---------------------------------------------------------------------------
 
 EXECUTIVE_SUMMARY_SYSTEM_PROMPT = """You are a senior editor producing the
 executive summary that goes at the top of a cross-document research report.
