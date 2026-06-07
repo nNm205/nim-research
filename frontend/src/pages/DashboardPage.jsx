@@ -205,7 +205,7 @@ const DashboardPage = () => {
           <div className="lg:col-span-2 space-y-6 md:space-y-8">
             {/* Quick actions */}
             <Panel title="Thao tác nhanh" icon={Sparkles}>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <QuickActionCard
                   icon={Plus}
                   title="Dự án mới"
@@ -219,13 +219,6 @@ const DashboardPage = () => {
                   description="Tìm + nạp + phân tích trong 1 lần"
                   onClick={() => navigate("/projects")}
                   accent="violet"
-                />
-                <QuickActionCard
-                  icon={Search}
-                  title="Knowledge base"
-                  description="Khám phá tri thức cộng đồng"
-                  onClick={() => navigate("/knowledge-base")}
-                  accent="amber"
                 />
               </div>
             </Panel>

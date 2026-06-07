@@ -8,7 +8,6 @@ import {
   FileText,
   BarChart3,
   ClipboardList,
-  BookOpen,
   LogOut,
   Settings,
   User,
@@ -237,11 +236,6 @@ const menuItems = [
     path: "/reports",
     label: "Báo cáo",
     icon: ClipboardList
-  },
-  {
-    path: "/knowledge-base",
-    label: "Knowledge Base",
-    icon: BookOpen
   }
 ];
 

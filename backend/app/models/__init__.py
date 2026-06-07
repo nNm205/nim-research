@@ -2,10 +2,6 @@ from app.models.analysis import DocumentAnalysis
 from app.models.chunk_embedding import ChunkEmbedding
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
-from app.models.knowledge_base import (
-    KnowledgeBaseArticle,
-    KnowledgeBaseSubmission,
-)
 from app.models.notification import Notification
 from app.models.project import Project
 from app.models.report import Report
@@ -17,8 +13,6 @@ __all__ = [
     "Document",
     "DocumentAnalysis",
     "DocumentChunk",
-    "KnowledgeBaseArticle",
-    "KnowledgeBaseSubmission",
     "Notification",
     "Project",
     "Report",

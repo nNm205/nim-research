@@ -88,12 +88,6 @@ const HomePage = () => {
                 icon={BarChart3}
                 onClick={() => navigate("/reports")}
               />
-              <QuickActionCard
-                title="Knowledge Base"
-                description="Tìm hiểu thêm về cách sử dụng hệ thống"
-                icon={BookOpen}
-                onClick={() => navigate("/knowledge-base")}
-              />
             </div>
           </div>
         </div>
@@ -384,11 +378,6 @@ const features = [
     description: "Các AI agents phối hợp làm việc để đạt hiệu quả tối ưu"
   },
   {
-    icon: "📚",
-    title: "Knowledge Base",
-    description: "Quản lý và tổ chức tài liệu, dữ liệu nghiên cứu tập trung"
-  },
-  {
     icon: "⚡",
     title: "Real-time Processing",
     description: "Xử lý và cập nhật kết quả theo thời gian thực"
@@ -415,11 +404,6 @@ const landingFeatures = [
     icon: "🤖",
     title: "Multi-Agent System",
     description: "Các AI agents phối hợp làm việc để đạt hiệu quả tối ưu"
-  },
-  {
-    icon: "📚",
-    title: "Knowledge Base",
-    description: "Quản lý và tổ chức tài liệu, dữ liệu nghiên cứu tập trung"
   },
   {
     icon: "⚡",

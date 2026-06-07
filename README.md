@@ -61,12 +61,10 @@ Researchers spend hours on the boring parts of literature work — searching acr
     <td align="center"><sub>Generated reports with HTML/DOCX/Markdown export</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/nim_research_knowledge-base.png" alt="Knowledge Base" /></td>
-    <td><img src="docs/images/nim_research_login.png" alt="Login" /></td>
+    <td colspan="2" align="center"><img src="docs/images/nim_research_login.png" alt="Login" width="50%" /></td>
   </tr>
   <tr>
-    <td align="center"><sub>Knowledge base with trigram search</sub></td>
-    <td align="center"><sub>Authentication</sub></td>
+    <td colspan="2" align="center"><sub>Authentication</sub></td>
   </tr>
 </table>
 
@@ -155,7 +153,7 @@ Researchers spend hours on the boring parts of literature work — searching acr
 
 - Async DB session **auto-detects pooler vs direct Postgres**: with Supabase Supavisor or PgBouncer the engine disables prepared-statement caching and uses UUID-named statements (transaction-mode pooler swaps backends between calls); with a direct Postgres connection (local docker-compose, bare-metal) it enables `pool_pre_ping` + the standard asyncpg cache for proper connection-loss recovery
 - pgvector for semantic chunk search
-- pg_trgm GIN indexes for fast title/content fuzzy search in the knowledge base
+- pg_trgm GIN indexes available for fast fuzzy text search (extension installed; drop-in for future text-search features)
 - List endpoints defer heavy `content` / JSONB columns; counts via `GROUP BY` instead of `len(selectin)`
 - Project counts (documents / analyses / reports / research sessions) computed in **one** SQL statement with four `LEFT JOIN`-ed subqueries — replaces the previous four sequential `GROUP BY` round-trips
 - Dashboard fires **two parallel requests** (projects + notifications) and derives every stat client-side — replaces the old N+1 pattern that issued up to 10 sequential calls

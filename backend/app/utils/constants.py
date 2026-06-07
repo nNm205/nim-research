@@ -73,24 +73,6 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class KnowledgeBaseArticleStatus(str, Enum):
-    PUBLISHED = "published"
-
-
-class KnowledgeBaseSubmissionStatus(str, Enum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
-
-class KnowledgeBaseCategory(str, Enum):
-    RESEARCH = "research"
-    ANALYSIS = "analysis"
-    METHODOLOGY = "methodology"
-    TOOLS = "tools"
-    GENERAL = "general"
-
-
 class SearchType(str, Enum):
     WEB = "web"
     ACADEMIC = "academic"

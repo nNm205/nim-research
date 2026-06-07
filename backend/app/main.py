@@ -17,7 +17,6 @@ from app.routes import (
     analysis,
     auth,
     documents,
-    knowledge_base,
     notifications,
     projects,
     reports,
@@ -103,7 +102,6 @@ app.include_router(research.router)
 app.include_router(analysis.router)
 app.include_router(reports.router)
 app.include_router(synthesis.router)
-app.include_router(knowledge_base.router)
 app.include_router(notifications.router)
 
 

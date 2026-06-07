@@ -10,7 +10,6 @@ import ProjectsPage from "./pages/ProjectsPage";
 import DocumentsPage from "./pages/DocumentsPage";
 import AnalysisPage from "./pages/AnalysisPage";
 import ReportsPage from "./pages/ReportsPage";
-import KnowledgeBasePage from "./pages/KnowledgeBasePage";
 import ProfilePage from "./pages/ProfilePage";
 import SettingsPage from "./pages/SettingsPage";
 import ProjectDetailsPage from "./pages/ProjectDetailPage";
@@ -41,7 +40,6 @@ const App = () => {
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/reports/:reportId" element={<ReportDetailPage />} />
             <Route path="/projects/:projectId/research" element={<ResearchPage />} />
-            <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
