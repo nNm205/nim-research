@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: nim_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nim}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nim}
+      POSTGRES_DB: ${POSTGRES_DB:-nim_research}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/00-extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nim} -d ${POSTGRES_DB:-nim_research}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nim_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nim}:${POSTGRES_PASSWORD:-nim}@postgres:5432/${POSTGRES_DB:-nim_research}
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_storage:/app/storage
+      - backend_logs:/app/logs
+      - model_cache:/app/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nim_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  postgres_data:
+  backend_storage:
+  backend_logs:
+  model_cache:

@@ -1,15 +1,31 @@
+# Python
 venv/
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
 .pytest_cache/
+.mypy_cache/
+
+# Editor / IDE
 .git/
 .idea/
 .vscode/
 
+# App data — mounted as named volumes at runtime
 logs/
 storage/
+.cache/
 
+# Secrets — supplied via docker-compose env_file at runtime
 .env
+.env.*
 
-*.pyc
-*.pyo
-*.pyd
+# Local dev orchestration files (not needed inside the image)
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile
+.dockerignore
+
+# Migration artefacts that are regenerated on demand
+alembic/versions/__pycache__/

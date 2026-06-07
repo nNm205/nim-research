@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,9 +37,24 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# CORS — allow the local Vite dev server out of the box, and the nginx
+# container the Docker stack ships with. Extra origins can be supplied via
+# the ``CORS_ALLOWED_ORIGINS`` env var (comma-separated) for prod deployments.
+_default_cors_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost",
+    "http://127.0.0.1",
+]
+_extra = [
+    o.strip()
+    for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_default_cors_origins + _extra,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -86,3 +103,13 @@ def root():
     return {
         "message": "Backend Running"
     }
+
+
+@app.get("/health")
+def health():
+    """Lightweight liveness probe used by Docker / k8s healthchecks.
+
+    Deliberately does not touch the DB — failing this endpoint should mean
+    the process is genuinely down, not that Postgres is briefly unreachable.
+    """
+    return {"status": "ok"}

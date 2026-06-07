@@ -4,6 +4,7 @@
 venv/
 .env
 .env.*
+!.env.example
 __pycache__/
 *.py[cod]
 *.pyo
@@ -77,3 +78,13 @@ frontend/**/*.md
 backend/**/*.md
 
 .kiro/ 
+
+
+# =========================
+# Docker artefacts
+# =========================
+# Backend storage (uploaded PDFs, parsed-doc snapshots) — mounted as a
+# volume in the Docker stack; we don't want host copies in git.
+backend/storage/
+backend/.cache/
+backend/logs/

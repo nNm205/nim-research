@@ -1,0 +1,27 @@
+node_modules/
+dist/
+dist-ssr/
+build/
+.cache/
+.vite/
+
+# Editor / IDE
+.git/
+.idea/
+.vscode/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local env — VITE_API_BASE_URL is provided as a build-arg / via nginx proxy
+.env
+.env.*
+
+# Local orchestration files (not needed inside the image)
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile
+.dockerignore
