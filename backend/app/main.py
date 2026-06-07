@@ -1,24 +1,31 @@
-from contextlib import asynccontextmanager
+"""FastAPI application entry point.
+
+Composition root for the API: registers routers, middleware, the lifespan
+hook (which recovers any zombie ``running`` rows from a previous crash),
+and the validation-error logger.
+"""
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.utils.logger import logger 
+
 from app.routes import (
-    auth, 
-    projects, 
-    documents, 
-    research,
     analysis,
-    reports,
-    synthesis,
+    auth,
+    documents,
     knowledge_base,
     notifications,
+    projects,
+    reports,
+    research,
+    synthesis,
 )
 from app.services.stale_recovery import recover_stale_sessions
+from app.utils.logger import logger
 
 
 @asynccontextmanager
@@ -37,16 +44,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# CORS — allow the local Vite dev server out of the box, and the nginx
-# container the Docker stack ships with. Extra origins can be supplied via
-# the ``CORS_ALLOWED_ORIGINS`` env var (comma-separated) for prod deployments.
+# ── CORS ────────────────────────────────────────────────────────────────────
+# Allow the local Vite dev server out of the box, plus the nginx container
+# the Docker stack ships with. Extra origins can be supplied via
+# ``CORS_ALLOWED_ORIGINS`` (comma-separated) for prod deployments.
 _default_cors_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost",
     "http://127.0.0.1",
 ]
-_extra = [
+_extra_cors_origins = [
     o.strip()
     for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
     if o.strip()
@@ -54,13 +62,14 @@ _extra = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_default_cors_origins + _extra,
+    allow_origins=_default_cors_origins + _extra_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+# ── Validation logging ──────────────────────────────────────────────────────
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
@@ -83,6 +92,7 @@ async def validation_exception_handler(
     )
 
 
+# ── Routers ─────────────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(documents.router)
@@ -96,13 +106,12 @@ app.include_router(synthesis.router)
 app.include_router(knowledge_base.router)
 app.include_router(notifications.router)
 
+
+# ── Liveness probes ─────────────────────────────────────────────────────────
 @app.get("/")
 def root():
     logger.info("Root endpoint accessed")
-    
-    return {
-        "message": "Backend Running"
-    }
+    return {"message": "Backend Running"}
 
 
 @app.get("/health")
