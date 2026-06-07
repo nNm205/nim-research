@@ -51,8 +51,18 @@ _POOL_SIZE = 20
 _MAX_OVERFLOW = 20
 _POOL_RECYCLE_S = 300
 
-_PG_STATEMENT_TIMEOUT_MS = "30000"          # 30 s per query
-_PG_IDLE_IN_TX_TIMEOUT_MS = "60000"          # 60 s idle in transaction
+_PG_STATEMENT_TIMEOUT_MS = "120000"         # 2 min per query — generous for
+                                             # the large JSONB inserts that
+                                             # follow PDF parsing
+_PG_IDLE_IN_TX_TIMEOUT_MS = "1800000"        # 30 min idle in transaction —
+                                             # docling can spend several
+                                             # minutes parsing a long paper
+                                             # while the request transaction
+                                             # sits idle. The previous 60 s
+                                             # value let Postgres kill the
+                                             # connection mid-pipeline so the
+                                             # final INSERT failed with
+                                             # "connection is closed".
 
 
 # ── URL helpers ──────────────────────────────────────────────────────────────
@@ -94,6 +104,31 @@ def _unique_stmt_name() -> str:
     return f"__asyncpg_{uuid.uuid4().hex}__"
 
 
+def _is_pooler_url(url: str) -> bool:
+    """True iff the DATABASE_URL points at a transaction-mode pooler.
+
+    The hostname conventions we recognise:
+      - ``*.pooler.supabase.com``  → Supabase Supavisor
+      - ``*pgbouncer*``            → self-hosted PgBouncer
+      - port 6543                  → Supavisor's transaction-mode port
+
+    Direct Postgres (port 5432, plain hostname, or the ``postgres``
+    container in docker-compose) returns False, so we can use the
+    standard asyncpg setup with prepared statements + pool_pre_ping.
+    """
+    lowered = (url or "").lower()
+    if "pooler.supabase.com" in lowered:
+        return True
+    if "pgbouncer" in lowered:
+        return True
+    if ":6543/" in lowered or ":6543?" in lowered or lowered.endswith(":6543"):
+        return True
+    return False
+
+
+_USING_POOLER = _is_pooler_url(settings.DATABASE_URL)
+
+
 # ── Sync engine ──────────────────────────────────────────────────────────────
 sync_database_url = _to_sync_url(settings.DATABASE_URL)
 
@@ -132,31 +167,45 @@ def get_db():
 # ── Async engine ─────────────────────────────────────────────────────────────
 async_database_url = _to_async_url(settings.DATABASE_URL)
 
+# Build connect_args dynamically depending on whether we're talking to a
+# direct Postgres (local docker-compose / bare metal) or a transaction-mode
+# pooler (Supabase Supavisor / PgBouncer).
+#
+# Direct Postgres: enable prepared-statement cache + pool_pre_ping. This is
+# the default asyncpg behaviour and it's what makes connection-loss recovery
+# work — without pre_ping a Postgres-side ``connection is closed`` (idle
+# timeout, restart, swap) surfaces as a 500 the next time we try to use the
+# stale connection.
+#
+# Pooler: every Supavisor checkout may land on a different physical backend,
+# so prepared-statement names from one backend become invalid on another. We
+# disable the cache, name each statement uniquely, and skip pre_ping (the
+# ping itself uses prepared-statement protocol and would break the pool).
+_async_connect_args: dict = {
+    "server_settings": {
+        "statement_timeout": _PG_STATEMENT_TIMEOUT_MS,
+        "idle_in_transaction_session_timeout": _PG_IDLE_IN_TX_TIMEOUT_MS,
+    },
+}
+if _USING_POOLER:
+    _async_connect_args.update(
+        statement_cache_size=0,
+        prepared_statement_cache_size=0,
+        prepared_statement_name_func=_unique_stmt_name,
+    )
+
 async_engine = create_async_engine(
     async_database_url,
     echo=settings.DEBUG,
-    # IMPORTANT: must be False with Supabase / Supavisor / PgBouncer
-    # (transaction mode). The async ping uses asyncpg's prepared statement
-    # protocol and breaks when the pooler reassigns backends.
-    pool_pre_ping=False,
+    # Disable pool_pre_ping ONLY when we're behind a pooler (where the ping
+    # itself can fail due to backend swaps). On a direct Postgres connection
+    # pre_ping is essential — without it, idle-timeout-killed connections
+    # come back with ``connection is closed`` on the next checkout.
+    pool_pre_ping=not _USING_POOLER,
     pool_size=_POOL_SIZE,
     max_overflow=_MAX_OVERFLOW,
     pool_recycle=_POOL_RECYCLE_S,
-    connect_args={
-        # Disable asyncpg's prepared-statement cache. ``statement_cache_size``
-        # is the native asyncpg name; ``prepared_statement_cache_size`` is
-        # the SQLAlchemy alias. Set both for safety across versions.
-        "statement_cache_size": 0,
-        "prepared_statement_cache_size": 0,
-        # Generate a fresh statement name per call so a pooler-swapped
-        # backend can never see a name another backend already used.
-        "prepared_statement_name_func": _unique_stmt_name,
-        # GUCs we want set on every connection.
-        "server_settings": {
-            "statement_timeout": _PG_STATEMENT_TIMEOUT_MS,
-            "idle_in_transaction_session_timeout": _PG_IDLE_IN_TX_TIMEOUT_MS,
-        },
-    },
+    connect_args=_async_connect_args,
 )
 
 AsyncSessionLocal = async_sessionmaker(
