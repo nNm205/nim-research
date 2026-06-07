@@ -83,6 +83,21 @@ _NAMED_HEADING_WORDS: list[str] = [
 # ─── Heading detection regexes ─────────────────────────────────────────────
 #
 # Numbered: "N", "N.M", "N.M.K" + space + Title-case text.
+
+
+def _capitalize_first(pattern: str) -> str:
+    """Capitalize only the first letter, preserving the rest verbatim.
+
+    Used to build a Vietnamese-friendly variant of named-heading
+    patterns. ``"Tóm\\s+tắt".title()`` would produce ``"Tóm\\s+Tắt"`` —
+    every word capitalised — which doesn't match how Vietnamese papers
+    actually print headings ("Tóm tắt", "Tài liệu tham khảo"). The
+    correct casing is "first letter of the heading capitalised, rest
+    lowercase", which is what this helper produces.
+    """
+    if not pattern:
+        return pattern
+    return pattern[0].upper() + pattern[1:].lower()
 #   Number: max 2 digits per component, max 3 components deep
 #   Title:  starts with capital letter (or ``&`` for "& Connections" style),
 #           3-100 chars, no newline.
@@ -96,6 +111,44 @@ _NUMBERED_HEADING_RE = re.compile(
     r"[ \t]*:?[ \t]*$"
 )
 
+# Roman-numeral headings (IEEE-style top-level sections).
+#   "I. INTRODUCTION" / "II. RELATED WORK" / "III. METHODOLOGY"
+#
+# We require the dot+space separator and a 1-99 chars title that starts
+# with a capital letter so common false positives — variable names ("V"),
+# inline references ("Eq. I"), and figure captions starting with "I" —
+# don't match. The list of valid roman numerals is upper-cased here so
+# the regex stays case-sensitive (papers don't write "i. introduction"
+# as a section heading; they use prose).
+_ROMAN_NUMERAL = (
+    r"(?:I{1,3}V?|IV|V|VI{1,3}|IX|X|XI{1,3}|XIV|XV|XVI{1,3}|XIX|XX|"
+    r"XXI{1,3}|XXIV|XXV)"
+)
+_ROMAN_HEADING_RE = re.compile(
+    r"(?m)^[ \t]*"
+    rf"(?P<roman>{_ROMAN_NUMERAL})"
+    r"\.[ \t]+"
+    r"(?P<title>[A-Z&][^\n]{2,99})"
+    r"[ \t]*:?[ \t]*$"
+)
+
+# Letter-prefixed sub-headings (IEEE / ACM style under a Roman section).
+#   "A. Setup" / "B. Datasets" / "C. Evaluation Metrics"
+#
+# These are always SUBSECTIONS of the most-recent Roman or numbered
+# parent. We require dot+space + capital-leading title for the same
+# reasons as ``_ROMAN_HEADING_RE``. To distinguish a real "B. Setup"
+# heading from a stray bullet "B. " that appears inside running text,
+# the heading_collector still applies ``_has_isolation_before`` on
+# each match.
+_LETTER_HEADING_RE = re.compile(
+    r"(?m)^[ \t]*"
+    r"(?P<letter>[A-Z])"
+    r"\.[ \t]+"
+    r"(?P<title>[A-Z&][^\n]{2,99})"
+    r"[ \t]*:?[ \t]*$"
+)
+
 # Named: a whitelisted heading word, optionally with leading numbering.
 # Case-insensitive (some papers write "INTRODUCTION", others "Introduction").
 #
@@ -105,7 +158,7 @@ _NUMBERED_HEADING_RE = re.compile(
 # and instead bake the casing variants into ``_NAMED_HEADING_VARIANTS``.
 
 _NAMED_HEADING_VARIANTS = "|".join(
-    pat.upper() + "|" + pat.lower() + "|" + pat.title()
+    pat.upper() + "|" + pat.lower() + "|" + pat.title() + "|" + _capitalize_first(pat)
     for pat in _NAMED_HEADING_WORDS
 )
 
@@ -129,7 +182,9 @@ class _CombinedHeadingRE:
     """
 
     def finditer(self, text: str):
-        # Order matters: numbered first (more specific), then named.
+        # Order matters: numbered first (most specific), then roman, then
+        # letter, then named. Each loop dedupes by start-offset against
+        # earlier loops so a position never gets matched twice.
         seen: set[int] = set()
 
         for m in _NUMBERED_HEADING_RE.finditer(text):
@@ -138,6 +193,24 @@ class _CombinedHeadingRE:
             seen.add(m.start())
             title_with_num = f"{m.group('num')} {m.group('title').strip()}"
             yield _FakeMatch(start=m.start(), group1=title_with_num)
+
+        for m in _ROMAN_HEADING_RE.finditer(text):
+            if m.start() in seen:
+                continue
+            seen.add(m.start())
+            yield _FakeMatch(
+                start=m.start(),
+                group1=f"{m.group('roman')} {m.group('title').strip()}",
+            )
+
+        for m in _LETTER_HEADING_RE.finditer(text):
+            if m.start() in seen:
+                continue
+            seen.add(m.start())
+            yield _FakeMatch(
+                start=m.start(),
+                group1=f"{m.group('letter')} {m.group('title').strip()}",
+            )
 
         for m in _NAMED_HEADING_RE.finditer(text):
             if m.start() in seen:
@@ -166,16 +239,33 @@ class _FakeMatch:
 _HEADING_RE = _CombinedHeadingRE()
 
 # Pre-stitch broken numbered headings: PDF extractors sometimes split
-# "3 Introduction" across two lines.
+# "3 Introduction" or "III. Introduction" across two lines. We restitch
+# both forms so the heading regexes below match the rejoined line.
 _SPLIT_NUMBERED_HEADING_RE = re.compile(
     r"(?m)^[ \t]*(\d{1,2}(?:\.\d{1,2}){0,2}\.?)[ \t]*\n[ \t]*"
+    r"([A-Z][A-Za-z].{2,118})$"
+)
+_SPLIT_ROMAN_HEADING_RE = re.compile(
+    rf"(?m)^[ \t]*({_ROMAN_NUMERAL}\.)[ \t]*\n[ \t]*"
+    r"([A-Z][A-Za-z].{2,118})$"
+)
+_SPLIT_LETTER_HEADING_RE = re.compile(
+    r"(?m)^[ \t]*([A-Z]\.)[ \t]*\n[ \t]*"
     r"([A-Z][A-Za-z].{2,118})$"
 )
 
 
 def _normalize_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return _SPLIT_NUMBERED_HEADING_RE.sub(r"\1 \2", text)
+    text = _SPLIT_NUMBERED_HEADING_RE.sub(r"\1 \2", text)
+    text = _SPLIT_ROMAN_HEADING_RE.sub(r"\1 \2", text)
+    # Letter-prefix re-stitch is conservative: only run it when the
+    # previous line is a Roman heading. Without that guard we'd
+    # accidentally glue ordinary single-letter list items ("A.\nlist
+    # item content") to their bodies. We skip it here and rely on the
+    # in-place ``_LETTER_HEADING_RE`` to match A./B./C. that already sit
+    # on a single line — which is the overwhelmingly common case.
+    return text
 
 
 # ─── Heading filtering ──────────────────────────────────────────────────────
@@ -252,7 +342,12 @@ def _has_isolation_before(text: str, pos: int) -> bool:
         return True
 
     # Consecutive headings: previous line itself looks like a heading.
-    if _NUMBERED_HEADING_RE.match(prev_line) or _NAMED_HEADING_RE.match(prev_line):
+    if (
+        _NUMBERED_HEADING_RE.match(prev_line)
+        or _NAMED_HEADING_RE.match(prev_line)
+        or _ROMAN_HEADING_RE.match(prev_line)
+        or _LETTER_HEADING_RE.match(prev_line)
+    ):
         return True
 
     return False
@@ -330,6 +425,38 @@ def _is_section_keyword_only(title: str) -> bool:
     return flat in canonical
 
 
+def _is_redundant_subsection(title: str, parent) -> bool:
+    """True iff the subsection title exactly repeats its parent's name.
+
+    A previous version of this check rejected ANY subsection whose
+    title was a canonical section keyword — that wrongly dropped
+    legitimate sub-headings like "B. Results" under "IV. Experiments"
+    in IEEE-style papers, where "Results" is a perfectly valid name
+    for a sub-section presenting experimental results.
+
+    The redundancy test now requires the subsection name to actually
+    match the parent's name (case-insensitive, whitespace-collapsed)
+    before we drop it. Examples:
+
+      - parent="Methods",  sub="3.1 Methods"  → True   (drop)
+      - parent="Experiments", sub="B. Results" → False  (keep)
+      - parent="Results", sub="3.1 Results"   → True   (drop)
+    """
+    if parent is None:
+        return False
+    parent_name = (parent.title or "").strip()
+    # Strip a leading numbering prefix from the parent's display title
+    # so "3 Methods" / "III. Methods" both match against "Methods".
+    parent_name = re.sub(
+        r"^(?:\d+(?:\.\d+){0,2}|[IVX]+)\.?\s+", "", parent_name
+    )
+    norm_parent = re.sub(r"\s+", " ", parent_name.strip().lower())
+    norm_sub = re.sub(r"\s+", " ", (title or "").strip().lower())
+    if not norm_parent or not norm_sub:
+        return False
+    return norm_parent == norm_sub
+
+
 # ─── Section span data ─────────────────────────────────────────────────────
 
 @dataclass
@@ -356,6 +483,53 @@ def _heading_depth(num: str | None) -> int:
     if not num:
         return 0
     return num.count(".") + 1
+
+
+# Lookup table for Roman numerals up to 25. Reads off-grammar but is the
+# clearest implementation; covers every realistic paper section count.
+_ROMAN_VALUES: dict[str, int] = {
+    "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5,
+    "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10,
+    "XI": 11, "XII": 12, "XIII": 13, "XIV": 14, "XV": 15,
+    "XVI": 16, "XVII": 17, "XVIII": 18, "XIX": 19, "XX": 20,
+    "XXI": 21, "XXII": 22, "XXIII": 23, "XXIV": 24, "XXV": 25,
+}
+
+
+def _roman_to_int(roman: str) -> int | None:
+    """Convert a Roman numeral string to an integer, or None on miss.
+
+    We use the explicit lookup table rather than the algorithmic
+    decomposition because the regex above already enforces that the
+    matched string is one of the canonical 25 forms — no point
+    duplicating that validation in two places.
+    """
+    return _ROMAN_VALUES.get(roman.upper())
+
+
+def _letter_to_int(letter: str) -> int | None:
+    """``A`` → 1, ``B`` → 2, ..., ``Z`` → 26. ``None`` for non-letters."""
+    if not letter or len(letter) != 1:
+        return None
+    code = ord(letter.upper()) - ord("A")
+    if 0 <= code <= 25:
+        return code + 1
+    return None
+
+
+def _last_before(items: list[dict], position: int) -> dict | None:
+    """Return the last item (by ``start``) whose ``start`` is < ``position``.
+
+    Used to bind a letter-sub-heading to the most recent Roman /
+    numbered parent. We sort defensively because the caller's list may
+    not be ordered.
+    """
+    best = None
+    for item in items:
+        s = item.get("start", -1)
+        if s < position and (best is None or s > best.get("start", -1)):
+            best = item
+    return best
 
 
 # ─── Main detection ────────────────────────────────────────────────────────
@@ -437,7 +611,79 @@ def _detect_sections(text: str) -> list[_SectionSpan]:
             "number": m.group("num"),
             "title": title,
             "is_named": False,
+            # ``display_number`` keeps the raw heading prefix the paper
+            # actually uses (Roman / letter / Arabic). The pipeline below
+            # normalises ``number`` to Arabic for sequence checks but
+            # uses ``display_number`` when rendering the section title.
+            "display_number": m.group("num"),
         })
+
+    # Roman top-level headings — converted to Arabic numbers so the
+    # sequence-validation pipeline below can treat them uniformly with
+    # ordinary "1.", "2.", ... headings. The ORIGINAL roman is kept in
+    # ``display_number`` for rendering.
+    roman_parents: list[dict] = []  # used to bind letter sub-headings below
+    for m in _ROMAN_HEADING_RE.finditer(text):
+        title = m.group("title").strip()
+        if not _looks_like_heading_title(title):
+            continue
+        if not _has_isolation_before(text, m.start()):
+            continue
+        roman = m.group("roman")
+        num = _roman_to_int(roman)
+        if num is None:
+            continue
+        entry = {
+            "start": m.start(),
+            "number": str(num),
+            "title": title,
+            "is_named": False,
+            "display_number": f"{roman}.",
+        }
+        numbered_raw.append(entry)
+        roman_parents.append(entry)
+
+    # Letter sub-headings — only kept when there's a Roman parent above
+    # them (otherwise an "A. Foo" line is more likely to be a list item
+    # or an enumeration inside a paragraph than a real subsection).
+    # We attach them tentatively as depth-2 of the most recent Roman
+    # parent and let the sequence validator drop spurious ones.
+    letter_candidates: list[dict] = []
+    for m in _LETTER_HEADING_RE.finditer(text):
+        title = m.group("title").strip()
+        if not _looks_like_heading_title(title):
+            continue
+        if not _has_isolation_before(text, m.start()):
+            continue
+        letter = m.group("letter")
+        sub_idx = _letter_to_int(letter)
+        if sub_idx is None:
+            continue
+        letter_candidates.append({
+            "start": m.start(),
+            "letter": letter,
+            "sub_idx": sub_idx,
+            "title": title,
+        })
+
+    # Bind each letter candidate to the most recent ROMAN top-level
+    # heading. Pure-Arabic numbered docs don't use "A./B./C." sub-
+    # headings (they use "3.1/3.2"), so we deliberately skip letters
+    # when no Roman parent has been seen — that avoids confusing
+    # bullet points with subsection markers.
+    if letter_candidates and roman_parents:
+        for cand in letter_candidates:
+            parent = _last_before(roman_parents, cand["start"])
+            if parent is None:
+                continue
+            top_arabic = parent["number"]
+            numbered_raw.append({
+                "start": cand["start"],
+                "number": f"{top_arabic}.{cand['sub_idx']}",
+                "title": cand["title"],
+                "is_named": False,
+                "display_number": f"{cand['letter']}.",
+            })
 
     for m in _NAMED_HEADING_RE.finditer(text):
         title = m.group("title").strip()
@@ -450,6 +696,7 @@ def _detect_sections(text: str) -> list[_SectionSpan]:
             "number": m.group("num"),
             "title": title,
             "is_named": True,
+            "display_number": m.group("num"),
         })
 
     # ── 2. Validate the numbered sequence ──────────────────────────────────
@@ -545,14 +792,19 @@ def _detect_sections(text: str) -> list[_SectionSpan]:
         if depth >= 2:
             if current is None:
                 continue
-            # Skip subsections that just repeat a parent's canonical name
-            # (e.g. "3.1 Methods" inside section "3 Methods").
-            if _is_section_keyword_only(h["title"]):
+            # Skip subsections that just repeat the *current parent's*
+            # canonical name (e.g. "3.1 Methods" inside section "3
+            # Methods"). We compare against the parent specifically so
+            # legitimate IEEE-style sub-headings like "B. Results"
+            # under "IV. Experiments" aren't dropped — they only
+            # collide if Results sits inside a section also called
+            # Results, which is genuinely redundant.
+            if _is_redundant_subsection(h["title"], current):
                 continue
             if current.subsections is None:
                 current.subsections = []
             current.subsections.append(_Subsection(
-                number=h["number"],
+                number=h.get("display_number") or h["number"],
                 title=h["title"],
                 char_offset=h["start"] - current.start,
             ))
@@ -568,16 +820,17 @@ def _detect_sections(text: str) -> list[_SectionSpan]:
             # affiliations) so we never emit a "Front Matter" pseudo-section.
             start_pos = 0
 
+        display_number = h.get("display_number") or h["number"]
         display_title = (
-            f"{h['number']} {_normalize_section_title(h['title'])}"
-            if h["number"] else _normalize_section_title(h["title"])
+            f"{display_number} {_normalize_section_title(h['title'])}"
+            if display_number else _normalize_section_title(h["title"])
         )
         current = _SectionSpan(
             start=start_pos,
             end=len(text),  # placeholder, updated when next heading is found
             title=display_title,
             section_type=_classify_title(h["title"]),
-            number=h["number"],
+            number=display_number,
             subsections=[],
         )
 
